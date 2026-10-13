@@ -1,6 +1,6 @@
 {
   "formatVersion": 2,
-  "sourceCommit": "90296eb17e28b69228dc0d11d35f258a526f4196",
+  "sourceCommit": "0cef5e43978fff0c75cad66f0cf0fae36bcf0448",
   "generatorSha256": "56b115203903d8bd1c6a8376c95b2915e1222cb5f0838e18f076775ee9e9f5b0",
   "removedCount": 32,
   "rewrittenPaths": [
@@ -21,7 +21,7 @@
     ".gitignore": "2ee7fe9df4ee8eceb58d6240ff7de9671d5cf22bbddfe42b3632a219f5aab188",
     "ARCHITECTURE.md": "066c9addd08e85685facebdf1bc8d9dbefd92a2692c5cb62a72f1067fdc91786",
     "Dockerfile": "1fdcbe38f6ae0469c4ac1fc22c18442822a2c17ea57176c0b2bcc8318c51f7a8",
-    "README.md": "d07563924fb454c1f66a1b437cabaa4ab29ed1e3ee5ef3ef891613109eac6664",
+    "README.md": "9dac6176f99e0dd3cd6011442bdc117948a9ff234ac26d8cf3e82e91ca3e0eab",
     "bun.lock": "8a7a6325e3fa67f541a5c70545fef08d8ce4c84caa35a83a4f30fad7f59f8654",
     "compose.db.yml": "ca9472d4462864599cd44d5d7d9910c744a2c0ca3e8e40f2ab4f9c0cdcafb92f",
     "compose.sqs.yml": "95c6f87c4b3fbeaddaf05158d67a51c3ab68dc125d9bade9875224715b802447",
@@ -36,8 +36,8 @@
     "docs/CHALLENGE.md": "a7db4c4b06e09bf865c43de252bb537122655502bbc4306ce38287c3a371581b",
     "docs/HTTP.md": "df9b789d19ab5155a36c1bb30daea9e8e25d50091d593dde2303906e86f0908b",
     "docs/LOAD_TEST.md": "d83aa6542c98c66143de4be541d757d5254c5dc2b6cad4bf41f995a6a578b008",
-    "docs/STATUS.md": "7c2e05ec94fe8668acf97c65bbc5e4a442cd3d9266c18918bfecb8cfcf0657d9",
-    "docs/workers.md": "7d34e4568edccbdf28859d20cf12740ab1453ee27c0d2846df2f03720de89212",
+    "docs/STATUS.md": "ea176f759c647556e36d0a31858bc9197f61afa6cb8fae03f0caab4c619ffbb3",
+    "docs/workers.md": "2c6ee52f4d1adb06834ad0ee39a49d3654ceaac64e6cfd6c36b677459fc6424b",
     "infra/postgres/README.md": "fd8baa8fca3f53438716a66fad875e38dce1ddcd3a0a891c84515f633a41572c",
     "infra/sqs/README.md": "8ed511c5e376d5eeb0568665f2ff068d6c11954026f52fb06102f50556735716",
     "infra/sqs/init/01-create-queues.sh": "0b11aa09ae2e524a657c28457a55d99a0274472162a1397017edee78da4ceb14",

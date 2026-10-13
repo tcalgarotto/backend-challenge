@@ -15,7 +15,7 @@ Atualização: 12/10/2026. Este documento descreve o que funciona hoje, como exe
 | Mensageria | Inbox de comandos, outbox de eventos (at-least-once), scheduler de referências pendentes, retry/backoff e DLQ |
 | Múltiplas instâncias | N réplicas `http,workers` no mesmo banco e filas; ack só após commit; lease/fencing nos workers |
 | Recuperação | Kill após commit e antes do ack resulta em redelivery sem duplicar efeito |
-| Schema | Migrations versionadas 002–008 (`bun run db:migrate`); runtime sem DDL e sem superuser |
+| Schema | Migrations versionadas 002–009 (`bun run db:migrate`); runtime sem DDL e sem superuser |
 | Operação | `/health/live`, `/health/ready` (PG e SQS), `/metrics`, logs JSON com `correlationId` |
 | Auth | Ponto de extensão `ProviderIdentityPort`/`ProviderAuthGuard`, em modo local no-op |
 
@@ -29,7 +29,7 @@ PORT=$(docker compose port --index 1 app 3037 | cut -d: -f2)
 curl -s http://127.0.0.1:$PORT/health/ready
 ```
 
-Réplicas, portas e variáveis: seção "Docker Compose" do [README](../README.md#docker-compose-stack-completa). Execução sem contêiner da aplicação (Bun local) também está no README.
+Réplicas, portas e variáveis: [referência operacional](workers.md#docker-compose-ordem-réplicas-e-variáveis). Execução sem contêiner da aplicação (Bun local): [workers.md](workers.md#execução-local-sem-contêiner-da-aplicação).
 
 Verificação:
 

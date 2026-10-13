@@ -178,3 +178,70 @@ bun test tests/integration/runtime/consumer-backlog.test.ts --timeout 360000
 Logs e fingerprints: gravados pelo teste no diretório de saída local. O diagnóstico prepara/reverte migrations
 no banco vazio e remove suas próprias filas. Não rodar em paralelo com outra
 migration que cria/remove a mesma role no mesmo cluster.
+
+## Referência operacional
+
+Detalhes de execução que o [README](../README.md) resume. Senhas citadas são só de laboratório local.
+
+### Docker Compose: ordem, réplicas e variáveis
+
+`compose.yml` inclui `compose.db.yml` e `compose.sqs.yml`. Ordem de subida: `postgres` saudável → `migrate` (`bun src/persistence/migrate.ts`, credencial owner) → `db-role` (cria `jwp_api` membro de `jwp_runtime`, idempotente) → `app` × N (após `sqs` saudável). Cada réplica escuta 3037 no contêiner; o host publica em `127.0.0.1:3037-3046`, uma porta por réplica atribuída pelo Compose (a réplica 1 não fica necessariamente em 3037). Descubra a porta real com `docker compose port --index 1 app 3037` ou `docker compose ps`. Com `APP_ROLES=workers` o healthcheck não exige HTTP e `--wait` conclui com os workers em execução. Não há balanceador: chame qualquer réplica diretamente. O build usa `network: host` só para o `bun install`.
+
+| Variável | Padrão | Uso |
+|---|---|---|
+| `JWP_APP_REPLICAS` | `3` | Número de réplicas `app` |
+| `APP_ROLES` | `http,workers` | `http`, `workers` ou `http,workers` |
+| `JWP_APP_PORT_RANGE` | `3037-3046` | Faixa de portas no host |
+| `JWP_PG_PORT` | `55432` | PostgreSQL no host |
+| `JWP_SQS_PORT` | `54566` | LocalStack no host |
+| `JWP_WORKER_INTERVAL_MS` | `250` | Pausa do scheduler e dos ciclos de consumer/outbox vazios, parciais ou com falha; lotes cheios inteiramente confirmados continuam imediatamente |
+
+```bash
+JWP_APP_REPLICAS=5 docker compose up -d --build --wait   # outra quantidade de réplicas
+docker compose down -v                                  # derruba e apaga os dados
+```
+
+### Execução local sem contêiner da aplicação
+
+```bash
+bun install --frozen-lockfile
+bun run check
+bun run build
+docker compose -p jwp-local -f compose.db.yml -f compose.sqs.yml up -d --wait
+JWP_MIGRATION_DATABASE_URL=postgresql://jwp:jwp_local@127.0.0.1:55432/jwp bun run db:migrate
+docker compose -p jwp-local -f compose.db.yml exec -T postgres psql -U jwp -d jwp \
+  -c "CREATE ROLE jwp_api LOGIN PASSWORD 'jwp_api_local'; GRANT jwp_runtime TO jwp_api;"
+
+export JWP_DATABASE_URL='postgresql://jwp_api:jwp_api_local@127.0.0.1:55432/jwp'
+export AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test
+export JWP_SQS_ENDPOINT=http://127.0.0.1:54566
+export JWP_SQS_COMMAND_QUEUE_URL=http://127.0.0.1:54566/queue/us-east-1/000000000000/wager-transactions.fifo
+export JWP_SQS_EVENT_QUEUE_URL=http://127.0.0.1:54566/queue/us-east-1/000000000000/wager-events.fifo
+bun run start:workers
+```
+
+`CREATE ROLE` é passo único em banco novo. `bun run db:migrate` aplica as oito migrations reversíveis (002–009) com a credencial owner; o processo da aplicação não executa DDL. `jwp_runtime` é role do cluster: a migration a cria se ausente (owner precisa de `CREATEROLE`) ou reutiliza uma role provisionada pelo DBA após validar seus atributos; o down nunca a remove ([infra/postgres/README.md](../infra/postgres/README.md)).
+
+`start:workers` equivale a `APP_ROLES=http,workers bun dist/main.js`. `bun run start` sobe só HTTP: persiste apostas e consultas, mas não drena filas, não publica a outbox e não retoma referências. Três instâncias: três terminais com `PORT=3037`, `3038` e `3039`, mesmo banco e mesmas filas.
+
+### Variáveis de ambiente e validação no boot
+
+Modelo em [`.env.example`](../.env.example) (`cp .env.example .env`; Bun carrega `.env` do diretório de execução e variáveis exportadas têm precedência). O boot usa `loadEnvironment` em `src/config/env.ts`: valida papéis, banco, portas, timeouts e filas antes de abrir recursos. Configuração inválida gera `INVALID_ENVIRONMENT` com todos os campos/códigos encontrados, sem os valores. Defaults e coerção numérica dos valores válidos não mudam. `APP_ROLES=http` ignora o intervalo e as filas exclusivas dos workers; URLs adicionais de readiness (`JWP_SQS_QUEUE_URLS`) continuam validadas. Credenciais AWS seguem a cadeia do SDK.
+
+### Readiness e logs
+
+`/health/live` responde `{"status":"ok"}` sem consultar dependências. `/health/ready` exige PostgreSQL e SQS alcançáveis em qualquer topologia HTTP; sem filas configuradas no modo só-HTTP, SQS aparece como `not_configured` e a resposta é 503 `unavailable`. Health e `/metrics` são públicos.
+
+Logs HTTP são JSON. O `correlationId` vem do contexto da requisição (`response.locals`), é o mesmo passado ao caso de uso e gravado nos eventos, e não aparece nas respostas de sucesso. `walletId` entra no log quando existe. O logger não registra saldo nem payload; chaves sensíveis, credenciais em URLs e valores de autorização viram `[REDACTED]` antes do limite de tamanho. IDs não são labels de métrica.
+
+### Smoke do Compose (`bun run test:compose`)
+
+Projeto `jwp-compose-smoke`, portas PG/SQS `56401`/`56402` e HTTP `3090–3099`. Para execuções simultâneas use `SMOKE_PROJECT=jwp-compose-smoke-<sufixo>` e portas distintas com `SMOKE_PG_PORT`, `SMOKE_SQS_PORT` e `SMOKE_APP_PORT_RANGE`; `SMOKE_REPLICAS` aceita 3–10 e `--keep` conserva a stack. Evidências ficam em `test-results/compose-smoke/` (saída local, fora do pacote) ou em `SMOKE_OUT`. Falha em qualquer sonda ou limpeza retorna exit 1. O runner resolve a raiz pelo próprio arquivo: `bun /caminho/do/projeto/scripts/compose-smoke/run.ts`.
+
+### Reprodução completa (`bun run test:integration`)
+
+Atalho para `bash scripts/reproduce/reproduce.sh`; `--matrix-only` roda a matriz e os controles sem repetir as regressões. Usa o projeto Compose `jwp-repro`, stacks dedicadas por suíte e observação separada, e encerra tudo removendo volumes: use ambiente descartável. `JWP_REPRO_SUFFIX` aceita 1–25 caracteres, começando por letra minúscula ASCII ou dígito e seguindo com minúsculas, dígitos ou hífen; isola os nomes de todas as stacks. Em execuções paralelas defina também `JWP_REPRO_PG_PORT`, `JWP_REPRO_SQS_PORT`, `JWP_REPRO_OBS_SQS_PORT`, `JWP_REPRO_PORT_BASE` e `JWP_REPRO_OUT`. `COMPOSE_PROJECT_NAME` altera o projeto principal; sem sufixo explícito, um nome diferente do padrão também vira sufixo das stacks dedicadas e de observação.
+
+### Integridade do pacote
+
+O `.delivery-manifest.json` do pacote lista o SHA-256 de cada arquivo em `fileSha256`. `sourceCommit` e `generatorSha256` identificam a origem da exportação; não são revisões consultáveis no Git do pacote, que tem um único commit. O manifesto não assina a procedência nem substitui os testes.

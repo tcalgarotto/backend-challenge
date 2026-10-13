@@ -1,200 +1,258 @@
 # Distributed Wagering Processor
 
-Implementação do desafio de backend da Jungle Gaming. Processa BET, WIN, LOSS, REFUND e ROLLBACK com dinheiro exato, lock por wallet, idempotência persistente, ledger auditável e eventos duráveis. O enunciado está em [docs/CHALLENGE.md](docs/CHALLENGE.md), snapshot do upstream `c7143e6d041585d6913f56eb7415105e074f83dc`.
+Serviço financeiro que processa `BET`, `WIN`, `LOSS`, `REFUND` e `ROLLBACK` de vários provedores de jogos, por HTTP e por SQS FIFO.
+Ele continua correto com mensagens duplicadas, fora de ordem ou simultâneas e com três ou mais instâncias no mesmo banco: dinheiro exato, lock por wallet, idempotência persistente, ledger append-only e eventos publicados só depois do commit.
+O enunciado está em [docs/CHALLENGE.md](docs/CHALLENGE.md); as decisões detalhadas, em [ARCHITECTURE.md](ARCHITECTURE.md).
 
-A entrega cobre HTTP, persistência financeira, mensageria SQS (consumer, outbox e scheduler), readiness, métricas e logs correlacionados. Não há IdP real (ponto de extensão documentado). Contrato da API: [docs/HTTP.md](docs/HTTP.md). Decisões: [ARCHITECTURE.md](ARCHITECTURE.md). Teste de carga, sem meta de RPS nem SLA: [docs/LOAD_TEST.md](docs/LOAD_TEST.md).
+**Stack:** Bun 1.3.14 · TypeScript 5.9.3 (estrito) · NestJS 11.2.7 · MikroORM 6.6.17 · PostgreSQL 17.6 · SQS FIFO no LocalStack 4.9.2 · Docker Compose. Versões fixadas em `package.json`/`bun.lock`.
 
-## Stack
+## Índice
 
-- Bun 1.3.14, TypeScript 5.9.3 (estrito), NestJS 11.2.7
-- PostgreSQL 17.6 e MikroORM 6.6.17 (entidades, transações, migrations e LockMode; claims/SQL explícitos, JWP-ADR-014)
-- LocalStack 4.9.2 para SQS FIFO local (`compose.yml`, que inclui `compose.db.yml` e `compose.sqs.yml`)
+1. [Início rápido](#início-rápido)
+2. [Arquitetura visual](#arquitetura-visual)
+3. [Decisões de arquitetura](#decisões-de-arquitetura)
+4. [Verificação](#verificação)
+5. [Demonstração manual](#demonstração-manual)
+6. [Resultados de carga](#resultados-de-carga)
+7. [Requisitos do enunciado → onde estão](#requisitos-do-enunciado--onde-estão)
+8. [Limites e trade-offs](#limites-e-trade-offs)
+9. [Mapa da documentação](#mapa-da-documentação)
 
-Versões em `package.json`/`bun.lock`. Domínio em `src/wallet` e `src/wagering` não importa NestJS nem ORM. Money é bigint em centavos; HTTP, eventos e PostgreSQL usam decimal string/`numeric`, nunca `number` monetário.
+## Início rápido
 
-O mapa [eliminatória → mecanismo → teste](docs/CHALLENGE.md#mecanismos-e-provas-das-falhas-eliminatórias) permite conferir as garantias diretamente no código e nos cenários executáveis.
-
-## Aplicação e domínio
-
-HTTP, consumer SQS e scheduler usam o mesmo caso de uso (`WagerApplicationService`), que decide, grava snapshot e gera eventos. `WalletLedgerEntry`, `InboxMessage` e `OutboxMessage` são classes de domínio usadas nas escritas; os adapters cuidam de identidade, locks e transação. Detalhes em [ARCHITECTURE.md](ARCHITECTURE.md).
-
-## Schema (migrations 002–009)
-
-`bun run db:migrate` aplica as oito migrations reversíveis, com credencial owner (`JWP_MIGRATION_DATABASE_URL`). O processo da aplicação não executa DDL. `jwp_runtime` é role do cluster: a migration a cria se ausente (owner precisa de `CREATEROLE`) ou reutiliza uma role já provisionada pelo DBA após validar seus atributos; o down nunca a remove. Detalhes em [infra/postgres/README.md](infra/postgres/README.md).
-
-| Migration | Conteúdo |
-|---|---|
-| `Migration202610110002` | Wallets, transações, ledger e barreiras de integridade |
-| `Migration202610110003` | Outbox de eventos de integração |
-| `Migration202610110004` | Reversão única por referência (índice sem `kind`) |
-| `Migration202610120005` | Inbox de comandos, jobs de referência pendente e inbox de eventos |
-| `Migration202610120006` | Timestamp durável de recebimento da inbox de comandos |
-| `Migration202610120007` | Sequência da outbox (`seq`) para publicação em ordem por wallet |
-| `Migration202610120008` | Índice `outbox_transaction_origin_idx` para buscar o evento de origem por transação |
-| `Migration202610130009` | `wallets.updated_at`, backfill histórico e proteção de timestamps |
-
-O runtime usa um LOGIN membro de `jwp_runtime`, sem superuser. Detalhe das barreiras: [ARCHITECTURE.md](ARCHITECTURE.md) ADR-003.
-
-## Docker Compose (stack completa)
-
-Um comando sobe PostgreSQL, LocalStack SQS (filas FIFO + DLQs), migrations, o LOGIN de runtime e N réplicas da aplicação (padrão 3):
+Pré-requisitos: Docker com Compose v2. Para os testes, Bun 1.3.14. Para os exemplos com `curl`, também `jq` e `uuidgen`.
 
 ```bash
-docker compose up -d --build --wait
-JWP_APP_REPLICAS=5 docker compose up -d --build --wait   # outra quantidade
-docker compose ps                                       # portas de cada réplica
-docker compose down -v                                  # derruba e apaga dados
-```
-
-Ordem: `postgres` saudável → `migrate` (`bun src/persistence/migrate.ts`, credencial owner) → `db-role` (cria `jwp_api` membro de `jwp_runtime`, idempotente) → `app` × N (após `sqs` saudável). Cada réplica escuta 3037 no contêiner; o host publica em `127.0.0.1:3037-3046` (uma porta por réplica, atribuída pelo Compose; a réplica 1 não fica necessariamente em 3037). Descubra a porta real com `docker compose port --index 1 app 3037` ou `docker compose ps`. Com `APP_ROLES=workers` o healthcheck não exige HTTP e `--wait` conclui com os workers em execução.
-
-| Variável | Padrão | Uso |
-|---|---|---|
-| `JWP_APP_REPLICAS` | `3` | Número de réplicas `app` |
-| `APP_ROLES` | `http,workers` | `http`, `workers` ou `http,workers` |
-| `JWP_APP_PORT_RANGE` | `3037-3046` | Faixa de portas no host |
-| `JWP_PG_PORT` | `55432` | PostgreSQL no host |
-| `JWP_SQS_PORT` | `54566` | LocalStack no host |
-| `JWP_WORKER_INTERVAL_MS` | `250` | Pausa do scheduler e dos ciclos de consumer/outbox vazios, parciais ou com falha; lotes cheios inteiramente confirmados continuam imediatamente |
-
-Sem balanceador: chame qualquer réplica diretamente. `compose.db.yml`/`compose.sqs.yml` continuam utilizáveis isoladamente (usados por `scripts/load` e `scripts/reproduce`). O build usa `network: host` só para o `bun install`.
-
-## Primeiros passos com a API
-
-Com a stack do Compose no ar (requer `curl`, `jq` e `uuidgen`):
-
-```bash
+docker compose up -d --build --wait          # PostgreSQL + SQS + migrations + 3 réplicas (HTTP + workers)
 API=http://$(docker compose port --index 1 app 3037)
-PLAYER=$(uuidgen)
-
-# abrir uma wallet com 100.00
-WALLET=$(curl -s -X POST $API/wallets -H 'content-type: application/json' \
-  -d "{\"playerId\":\"$PLAYER\",\"initialBalance\":{\"amount\":\"100.00\",\"currency\":\"BRL\"}}" | jq -r .id)
-
-# apostar 25.00 (repita o mesmo comando: a resposta volta igual, com idempotentReplay=true)
-curl -s -X POST $API/wagering/transactions -H 'content-type: application/json' -H 'Idempotency-Key: provider-a:tx-1' \
-  -d "{\"providerId\":\"provider-a\",\"externalTransactionId\":\"tx-1\",\"playerId\":\"$PLAYER\",\"walletId\":\"$WALLET\",\"roundId\":\"round-1\",\"gameId\":\"game-1\",\"kind\":\"BET\",\"money\":{\"amount\":\"25.00\",\"currency\":\"BRL\"}}"
-
-# saldo, ledger e reconciliação
-curl -s $API/wallets/$WALLET
-curl -s $API/wallets/$WALLET/ledger
-curl -s -X POST $API/wallets/$WALLET/reconciliation -H 'content-type: application/json' -d '{}'
+curl -s $API/health/ready                     # {"status":"ready", ...} com PostgreSQL e SQS "up"
+docker compose down -v                        # derruba e apaga os dados
 ```
 
-Payloads, status e códigos de erro: [docs/HTTP.md](docs/HTTP.md).
+O Compose sobe PostgreSQL, LocalStack com as filas FIFO e DLQs, aplica as migrations com a credencial owner, cria o LOGIN de runtime e inicia três réplicas da aplicação, cada uma com HTTP, consumer SQS, publisher da outbox e scheduler. Não há balanceador: cada réplica tem sua porta em `127.0.0.1:3037-3046`. Réplicas, portas, variáveis e execução sem contêiner: [docs/workers.md](docs/workers.md#referência-operacional).
 
-## Execução local
+## Arquitetura visual
 
-Requisitos: Bun 1.3.14, Docker Compose v2. Senhas abaixo são só de laboratório local.
+### Componentes
 
-```bash
-bun install --frozen-lockfile
-bun run check
-bun run build
-docker compose -p jwp-local -f compose.db.yml -f compose.sqs.yml up -d --wait
-JWP_MIGRATION_DATABASE_URL=postgresql://jwp:jwp_local@127.0.0.1:55432/jwp bun run db:migrate
-docker compose -p jwp-local -f compose.db.yml exec -T postgres psql -U jwp -d jwp \
-  -c "CREATE ROLE jwp_api LOGIN PASSWORD 'jwp_api_local'; GRANT jwp_runtime TO jwp_api;"
+```mermaid
+flowchart LR
+  P["Provedor de jogos"] -->|"POST /wagering/transactions"| HTTP["WageringController"]
+  P -->|"wallets, ledger, reconciliação"| WAL["WalletController<br/>OpenWallet, WalletQueries, ReconcileWallet"]
+  P -->|"WagerTransactionRequested"| CMD[["SQS wager-transactions.fifo"]]
+  CMD --> CONS["SqsWagerConsumer<br/>inbox por consumer + messageId"]
+  CMD -.->|"5 recebimentos"| DLQ[["wager-transactions-dlq.fifo"]]
+  HTTP --> UC["WagerApplicationService<br/>mesmo caso de uso"]
+  CONS --> UC
+  SCH["Scheduler de referências pendentes<br/>backoff 1 s a 60 s, TTL 15 min"] --> UC
+  UC --> PG[("PostgreSQL<br/>wallets · wager_transactions · ledger_entries<br/>inbox · outbox_events")]
+  WAL --> PG
+  PG --> PUB["SqsOutboxPublisher<br/>claim SKIP LOCKED + lease"]
+  PUB --> EVT[["SQS wager-events.fifo"]]
+  EVT --> DS["Consumidores downstream<br/>deduplicam por eventId"]
 ```
 
-A instalação com `--frozen-lockfile` usa as versões registradas em `bun.lock`. Os comandos acima verificam e compilam a aplicação antes de preparar o banco local.
+Toda réplica executa os mesmos componentes. A coordenação entre réplicas não usa memória nem coordenador externo: está no PostgreSQL (lock de linha por wallet, constraints, claims com lease). O SQS só é tocado depois do commit.
 
-`CREATE ROLE` é passo único em banco novo. Variáveis: [`.env.example`](.env.example). Bun carrega `.env` automaticamente no diretório de execução. `.env.example` é apenas um modelo: copie com `cp .env.example .env`; variáveis exportadas têm precedência. O LOGIN/senha do modelo corresponde ao comando acima.
+### Um BET, do pedido ao commit
 
-O boot usa `loadEnvironment` em `src/config/env.ts`: valida papéis, banco, portas, timeouts e filas antes de abrir recursos. Uma configuração inválida gera `INVALID_ENVIRONMENT` com todos os campos/códigos encontrados, sem seus valores. Defaults e coerção numérica dos valores válidos permanecem iguais. `APP_ROLES=http` ignora o intervalo e as filas exclusivas dos workers; URLs adicionais de readiness continuam sendo validadas. As credenciais AWS seguem a cadeia do SDK.
-
-Serviço completo (HTTP + consumer SQS + publisher da outbox + scheduler):
-
-```bash
-export JWP_DATABASE_URL='postgresql://jwp_api:jwp_api_local@127.0.0.1:55432/jwp'
-export AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test
-export JWP_SQS_ENDPOINT=http://127.0.0.1:54566
-export JWP_SQS_COMMAND_QUEUE_URL=http://127.0.0.1:54566/queue/us-east-1/000000000000/wager-transactions.fifo
-export JWP_SQS_EVENT_QUEUE_URL=http://127.0.0.1:54566/queue/us-east-1/000000000000/wager-events.fifo
-bun run start:workers
+```mermaid
+sequenceDiagram
+  autonumber
+  participant P as Provedor
+  participant API as WageringController
+  participant U as WagerApplicationService
+  participant DB as PostgreSQL
+  P->>API: POST /wagering/transactions (Idempotency-Key)
+  API->>U: execute(body, key, correlationId)
+  U->>U: validar payload e calcular SHA-256 do JSON canônico
+  U->>DB: BEGIN (READ COMMITTED)
+  U->>DB: SELECT wallet FOR UPDATE (LockMode.PESSIMISTIC_WRITE)
+  U->>DB: buscar (provider_id, idempotency_key)
+  alt mesma chave e mesmo hash
+    DB-->>U: snapshot persistido, com o status HTTP original
+    U->>DB: COMMIT sem efeito novo
+    U-->>P: status original do snapshot, 200 ou 422, corpo original com idempotentReplay=true
+  else mesma chave e hash diferente
+    U->>DB: ROLLBACK
+    U-->>P: 409 IDEMPOTENCY_CONFLICT
+  else operação nova
+    U->>U: Wallet.debit decide, saldo insuficiente vira REJECTED
+    U->>DB: INSERT wager_transactions com snapshot
+    U->>DB: UPDATE wallets + INSERT ledger_entries (só se o saldo muda)
+    U->>DB: INSERT outbox_events (mesma transação)
+    U->>DB: COMMIT (triggers e constraints diferidas validam)
+    U-->>P: 200 PROCESSED ou 422 REJECTED
+  end
 ```
 
-`start:workers` equivale a `APP_ROLES=http,workers bun dist/main.js`. `bun run start` sobe só HTTP (`APP_ROLES=http`): persiste apostas e consultas, mas não drena filas, não publica a outbox e não retoma referências. `APP_ROLES=workers bun run start` sobe só os workers internos. Três instâncias: três terminais com `PORT=3037`, `3038` e `3039`, mesmo banco e mesmas filas. Sob carga, separar papéis (processos `APP_ROLES=http` e `APP_ROLES=workers`) dá a cada um seu pool e seu event loop; é a topologia usada no teste de carga. Operação, drain, SIGTERM, retry/backoff e DLQ: [docs/workers.md](docs/workers.md).
+O replay não reavalia nada: devolve o status e o corpo gravados no snapshot (uma BET rejeitada por saldo repete 422 `INSUFFICIENT_FUNDS`), só trocando `idempotentReplay` para `true`. O lock vem antes da leitura da identidade e do saldo, então duas requisições da mesma wallet nunca decidem sobre o mesmo saldo. Pelo SQS, a única diferença é que a inbox é gravada na mesma transação e o `DeleteMessage` (ack) só acontece após o commit.
 
-```bash
-curl -s http://127.0.0.1:3037/health/live
-curl -i http://127.0.0.1:3037/health/ready
-curl -s http://127.0.0.1:3037/metrics
+### Do commit até a fila de eventos
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant A as Publisher A
+  participant B as Publisher B
+  participant DB as outbox_events
+  participant Q as wager-events.fifo
+  A->>DB: claim: evento mais antigo de cada wallet, FOR UPDATE SKIP LOCKED
+  A->>DB: grava claim_token e lease_until, COMMIT
+  B->>DB: mesmo claim: pula as wallets já reivindicadas
+  A->>Q: SendMessage em ordem de seq (MessageGroupId = walletId)
+  alt envio confirmado e token ainda válido
+    A->>DB: markPublished
+  else falha ou processo morto
+    Note over A,DB: lease expira e outro publisher reivindica o mesmo evento
+    B->>Q: reenvia com o mesmo eventId (at-least-once)
+  end
 ```
 
-`/health/live` responde `{"status":"ok"}` sem consultar dependências. `/health/ready` exige PostgreSQL e SQS alcançáveis em qualquer topologia HTTP. Sem filas em `JWP_SQS_QUEUE_URLS` no modo só-HTTP, SQS aparece como `not_configured` e readiness responde 503 `unavailable`; o HTTP continua disponível, mas não está pronto pelo contrato. Com filas configuradas, falha em qualquer probe também dá 503. Health é público. Ctrl+C drena workers (quando ligados) e fecha o pool.
+`seq` é gravado sob o lock da wallet, portanto segue a ordem de commit; só um publisher tem eventos de uma wallet em voo. Entre wallets diferentes, a publicação é paralela.
 
-## Autenticação (modo local)
+## Decisões de arquitetura
 
-Não há Keycloak, login nem tabela de usuários. `ProviderIdentityPort` e `ProviderAuthGuard` (`APP_GUARD`) estão na composição HTTP: modo local aceita qualquer chamada e não autentica o `providerId`. Esse valor continua sujeito às validações de domínio. Health e `/metrics` são `@PublicRoute()`. Desenho com IdP: [ARCHITECTURE.md](ARCHITECTURE.md), JWP-ADR-010. Consumidores SQS não passam pelo guard (canal interno confiável).
+Uma linha por decisão. "ADR" é um registro de decisão de arquitetura: cada link abre a seção do [ARCHITECTURE.md](ARCHITECTURE.md) com motivo, alternativas e custos.
 
-## Logs
+| Decisão | Por quê | Onde no código | Como verificar | ADR |
+|---|---|---|---|---|
+| **Money em `bigint` de centavos**; string decimal na API e nos eventos, `numeric(20,2)` no banco | `number` perde centavos acima de 2^53 e arredonda em silêncio | [`src/shared/domain/money.ts`](src/shared/domain/money.ts#L16), [`src/persistence/financial-orm.ts`](src/persistence/financial-orm.ts) | `tests/unit/money.test.ts`; `financial-schema.test.ts` (`exact ORM string mapping above 2^53…`); matriz M02 | [001](ARCHITECTURE.md#jwp-adr-001--money-exato-com-escala-fixa) |
+| **Lock por wallet** com `LockMode.PESSIMISTIC_WRITE` (`FOR UPDATE`) em transação curta, sem lock global | Serializa só quem disputa o mesmo saldo; wallets diferentes seguem em paralelo; menos retries que optimistic locking | [`sql-process-wager-store.ts:120`](src/wagering/infrastructure/sql-process-wager-store.ts#L120), [`sql-wallet-query-store.ts:63`](src/wallet/infrastructure/sql-wallet-query-store.ts#L63) | matriz M03 (100,00 com dois BETs de 80,00 em 3 instâncias); `multi-process.test.ts` (`100/80/80 on 20 wallets…`) | [002](ARCHITECTURE.md#jwp-adr-002--lock-por-wallet-em-transação-curta) |
+| **Invariantes no schema**: saldo ≥ 0, identidades únicas, ledger encadeado por versão | Vale também para escrita concorrente ou SQL direto que pule a aplicação | [`financial-sql.ts:22`](src/persistence/migrations/financial-sql.ts#L22) (CHECK), [`:51`](src/persistence/migrations/financial-sql.ts#L51) (UNIQUE), [`:80`](src/persistence/migrations/financial-sql.ts#L80) (append em ordem de versão) | `tests/integration/schema/financial-schema.test.ts` | [003](ARCHITECTURE.md#jwp-adr-003--schema-e-barreiras-de-integridade) |
+| **Ledger append-only** | Auditoria exige histórico imutável; reconciliação compara saldo com ledger | trigger `ledger_no_mutation` em [`financial-sql.ts:74`](src/persistence/migrations/financial-sql.ts#L74); role de runtime sem UPDATE/DELETE | matriz M07; `financial-schema.test.ts` (`runtime UPDATE/DELETE/TRUNCATE are denied…`) | [003](ARCHITECTURE.md#jwp-adr-003--schema-e-barreiras-de-integridade) |
+| **Idempotência persistente** por `(provider_id, idempotency_key)`, hash SHA-256 do JSON canônico e snapshot da resposta | Timeout não diz se houve commit; o retry precisa recuperar o resultado, não repetir o efeito | [`process-wager.ts:78`](src/wagering/application/process-wager.ts#L78) (hash), [`sql-process-wager-store.ts:125`](src/wagering/infrastructure/sql-process-wager-store.ts#L125) e [`:127`](src/wagering/infrastructure/sql-process-wager-store.ts#L127) | matriz M04 (50 envios paralelos + 10 cópias SQS → um débito) e M06; M13 (restart) | [004](ARCHITECTURE.md#jwp-adr-004--idempotência-de-negócio-e-replay) |
+| **Reversão única** por transação referenciada, somando REFUND e ROLLBACK | REFUND e ROLLBACK da mesma BET creditariam o stake duas vezes; a regra contém a do enunciado e é mais restrita | índice `wager_one_reversal` em [`Migration202610110004.ts`](src/persistence/migrations/Migration202610110004.ts#L7); [`wager-transaction.ts:281`](src/wagering/domain/wager-transaction.ts#L281) | matriz M08; segunda reversão → 422 `ALREADY_REVERSED` | [005](ARCHITECTURE.md#jwp-adr-005--referências-estados-e-reversão-única) |
+| **Referência fora de ordem** vira `PENDING_REFERENCE`, resolvida pelo scheduler | A ordem entre canais não é garantida; esperar com prazo é melhor que rejeitar na hora | prazo de 15 min em [`process-wager.ts:98`](src/wagering/application/process-wager.ts#L98); backoff em [`pending-reference-scheduler.ts`](src/messaging/pending-reference-scheduler.ts#L52), claim em [`:144`](src/messaging/pending-reference-scheduler.ts#L144) | matriz M10; `multi-process.test.ts` (`REFUND/ROLLBACK delivered before the BET…`) | [005](ARCHITECTURE.md#jwp-adr-005--referências-estados-e-reversão-única) |
+| **LOSS exige `"0.00"`** e não aceita referência; vira PROCESSED sem ledger | Registra o resultado da rodada sem inventar movimento de saldo | [`wager-transaction.ts:204`](src/wagering/domain/wager-transaction.ts#L204) | `tests/unit/wager-transaction.test.ts`; matriz M07 (sem ledger para LOSS) | [005](ARCHITECTURE.md#jwp-adr-005--referências-estados-e-reversão-única) |
+| **Inbox persistente** por `(consumer_name, message_id)` e ack só após o commit | Redelivery do SQS não pode reaplicar efeito; ack antes do commit perderia trabalho | [`Migration202610120005.ts:13`](src/persistence/migrations/Migration202610120005.ts#L13); [`sql-inbox-process-wager-store.ts`](src/messaging/sql-inbox-process-wager-store.ts#L52); ack em [`sqs-wager-consumer.ts:270`](src/messaging/sqs-wager-consumer.ts#L270) | matriz M11; `recovery.test.ts` (`SIGKILL after the financial commit and before the SQS ack…`) | [006](ARCHITECTURE.md#jwp-adr-006--atomicidade-e-inbox) |
+| **Transactional outbox** com claim `FOR UPDATE SKIP LOCKED`, lease e token | Não existe transação distribuída entre PostgreSQL e SQS; o evento só sai depois do commit e sobrevive a crash | INSERT em [`sql-process-wager-store.ts:187`](src/wagering/infrastructure/sql-process-wager-store.ts#L187); claim em [`sql-outbox-store.ts:100`](src/messaging/outbox/sql-outbox-store.ts#L100); envio em [`sqs-outbox-publisher.ts:57`](src/messaging/outbox/sqs-outbox-publisher.ts#L57) | `outbox-publisher.test.ts` (`two publishers claim disjoint rows…`); matriz M12; `recovery.test.ts` (publisher morto antes/depois do `SendMessage`) | [007](ARCHITECTURE.md#jwp-adr-007--sqs-e-outbox) |
+| **Ordem por wallet** na publicação (`seq` + `MessageGroupId = walletId`) | O consumidor recebe os eventos de uma wallet na ordem de commit | [`Migration202610120007.ts`](src/persistence/migrations/Migration202610120007.ts#L6); [`sqs-outbox-publisher.ts:88`](src/messaging/outbox/sqs-outbox-publisher.ts#L88) | matriz M12; carga: downstream sem duplicados nem faltantes | [007](ARCHITECTURE.md#jwp-adr-007--sqs-e-outbox) |
+| **Retry e DLQ**: visibilidade 3, 6, 12, 24, 48 s; DLQ após 5 recebimentos; heartbeat a cada 10 s | Separa falha transitória (retry), de negócio (ack) e permanente (DLQ) | [`sqs-wager-consumer.ts`](src/messaging/sqs-wager-consumer.ts#L288) | `consumer-resilience.test.ts`; matriz M11 (poison → DLQ) | [007](ARCHITECTURE.md#jwp-adr-007--sqs-e-outbox) |
+| **Readiness exige PostgreSQL e SQS**; liveness não consulta dependências | O balanceador só deve mandar tráfego para quem consegue concluir uma operação | [`src/observability/readiness.ts`](src/observability/readiness.ts#L21) | `tests/integration/observability/readiness.test.ts` | [008](ARCHITECTURE.md#jwp-adr-008--runtime) |
+| **Status HTTP distintos** (400, 409, 422, 202, 503, 500) por classe de situação | O provedor decide retry, consulta ou correção pelo status e pelo `code`, sem ler mensagem | [`src/wagering/http/wagering.module.ts`](src/wagering/http/wagering.module.ts#L20); tabela em [docs/HTTP.md](docs/HTTP.md#erros) | matriz M09 | [009](ARCHITECTURE.md#jwp-adr-009--http-códigos-e-diagnóstico) |
+| **Autenticação como ponto de extensão** (`ProviderIdentityPort` + `ProviderAuthGuard` global) | O enunciado não pontua auth; a porta permite plugar um IdP OIDC sem tocar no domínio | [`provider-identity.ts:11`](src/shared/http/provider-identity.ts#L11); [`app.module.ts:23`](src/app.module.ts#L23) | `tests/unit/provider-identity.test.ts` | [010](ARCHITECTURE.md#jwp-adr-010--autenticação) |
+| **FAILED auditável** para falha permanente conhecida de infraestrutura | Uma falha terminal precisa de registro consultável, sem ser confundida com rejeição financeira | [`src/shared/infrastructure/permanent-wager-failure.ts`](src/shared/infrastructure/permanent-wager-failure.ts) | `tests/integration/wager/permanent-failure.test.ts` | [011](ARCHITECTURE.md#jwp-adr-011--failed-auditável) |
+| **MikroORM para transação e locks; SQL explícito** para claims e escritas críticas | Mantém visíveis e revisáveis os locks, fences e a ordem de escrita | [`sql-process-wager-store.ts:65`](src/wagering/infrastructure/sql-process-wager-store.ts#L65) | `process-wager.test.ts` (`LockMode keeps row locking and fresh SQL state…`) | [014](ARCHITECTURE.md#jwp-adr-014--mikroorm-como-infraestrutura-transacional-e-sql-explícito) |
 
-Logs HTTP são JSON. Em sucesso, `correlationId` vem do contexto da requisição (`response.locals`), o mesmo passado ao use case e gravado nos eventos; respostas de sucesso do contrato **não** devolvem esse campo. `walletId` entra no log quando existe (path, body ou `id` da abertura). Health não exige correlationId. O logger não registra saldo nem payload. Chaves sensíveis são mascaradas com `[REDACTED]`, assim como credenciais em URLs e valores de autorização nas strings permitidas; o mascaramento acontece antes do limite de tamanho. IDs não são labels de métrica.
-
-## LOSS
-
-`LOSS` exige `money.amount` igual a `"0.00"` e não aceita `referenceExternalTransactionId`. O resultado é PROCESSED com `WagerTransactionProcessed`; saldo e versão não mudam, sem ledger nem `WalletBalanceChanged`. Valor diferente de zero ou referência são recusados com 400 `INVALID_PAYLOAD`, por HTTP ou SQS.
-
-## Idempotency-Key
-
-Header obrigatório; recomendado `{providerId}:{externalTransactionId}`. O formato aceito é uma string opaca não vazia após `trim`, com até 128 unidades UTF-16, sem NUL nem substitutos isolados. O prefixo do provider não é obrigatório: o escopo é a coluna `provider_id`, e a aplicação preserva a chave recebida, sem trim, lowercase ou recomposição. Ausência/tipo/formato inválido → HTTP 400 `IDEMPOTENCY_KEY_REQUIRED`. Mesma chave válida com payload divergente → 409 `IDEMPOTENCY_CONFLICT`. Detalhes em [docs/HTTP.md](docs/HTTP.md).
-
-## Reversão única
-
-Uma transação referenciada admite no máximo uma reversão PROCESSED, somando REFUND e ROLLBACK. A segunda operação vira REJECTED/`ALREADY_REVERSED` (HTTP 422), sem novo saldo/ledger. ROLLBACK de um REFUND é permitido (referencia o REFUND). ROLLBACK de ROLLBACK é proibido. A regra contém a do enunciado (sem duas reversões do mesmo tipo) e também impede REFUND + ROLLBACK da mesma BET, que creditariam o stake duas vezes; decisão e prova em [ARCHITECTURE.md](ARCHITECTURE.md), JWP-ADR-005.
+Domínio (`src/wallet/domain`, `src/wagering/domain`, `src/shared/domain`) não importa NestJS nem ORM. HTTP, consumer e scheduler chamam o mesmo `WagerApplicationService`; os adapters em `infrastructure/` controlam transação, lock e identidade durável.
 
 ## Verificação
 
-| Comando | Escopo |
+Do mais rápido ao mais completo. Os testes de integração usam PostgreSQL e SQS reais em containers descartáveis (nada é mockado) e falham se a infraestrutura estiver ausente.
+
+| # | Comando | O que prova | Resultado esperado |
+|---|---|---|---|
+| 1 | `bun install --frozen-lockfile && bun run check` | Typecheck, testes unitários de domínio, build e smoke HTTP/DI | exit 0; 120 testes unitários e 2 de smoke, 0 falhas |
+| 2 | `bun run test:integration` | Reprodução completa: migrations, atomicidade, inbox, outbox, retry/DLQ, concorrência multiprocesso, crash recovery e a matriz M01–M14 | exit 0; na última execução registrada: 80 etapas, 398 testes, 0 falhas, 4022 asserções |
+| 3 | `bun scripts/reproduce/reproduce.sh --matrix-only` | Só a matriz de aceitação e os controles negativos | exit 0 |
+| 4 | `bun run test:compose` | Sobe `compose.yml` do zero com imagem real e 3 réplicas; confere `/health/ready` de cada uma, schema, role de runtime e as 4 filas com redrive; encerra com `down -v` | exit 0; 18/18 verificações |
+| 5 | `bun run test:load` | Carga contra PostgreSQL/SQS reais, com invariantes ao final | exit 0; 17 invariantes verdadeiras, downstream sem duplicados nem faltantes |
+
+A matriz (`tests/matrix/delivery/matrix.test.ts`) cobre os cenários da seção 13 do enunciado:
+
+| Cenário do enunciado | Teste |
 |---|---|
-| `bun run check` | Typecheck, testes unitários, build e smoke HTTP/DI |
-| `bun run test:integration` | Integração, concorrência, recuperação e matriz de aceitação contra PostgreSQL/SQS reais e descartáveis (atalho para `bash scripts/reproduce/reproduce.sh`) |
-| `bun scripts/reproduce/reproduce.sh` | O mesmo runner, chamado diretamente |
-| `bun scripts/reproduce/reproduce.sh --matrix-only` | Matriz e controles, sem repetir todas as regressões |
-| `bun run test:compose` | Recria `compose.yml` do zero com imagem real e 3 réplicas HTTP/workers, sem nginx; aguarda healthy, verifica `/health/ready` de cada réplica, PostgreSQL/schema/role runtime e as 4 filas FIFO/DLQs com redrive, e encerra com `down -v`. Sem carga ou mix financeiro; `--keep` conserva a stack para inspeção |
-| `bun run test:load` | Carga contra PostgreSQL/SQS reais em Compose próprio (`jwp-load`); por padrão, 3 processos HTTP e 3 de workers, com pools separados. `LOAD_WORKERS=0` usa processos combinados `http,workers`. Verifica saldo = ledger e entrega dos eventos. Ver [docs/LOAD_TEST.md](docs/LOAD_TEST.md) |
+| Mesma aposta 50 vezes em paralelo | M04; `multi-process.test.ts` (`the same BET sent 50 times…`) |
+| Duas apostas de 80,00 sobre 100,00 | M03 |
+| Wallets distintas em paralelo | M05 |
+| ≥ 3 processos simultâneos | M01; `multi-process.test.ts` (`three API instances, three SQS workers…`) |
+| Worker morto depois do commit e antes do ack | `tests/recovery/crash/recovery.test.ts` |
+| Dois publishers sobre a mesma outbox | M12; `outbox-publisher.test.ts` |
+| ROLLBACK/REFUND antes da referência | M10 |
+| Reinício com consistência final | M13; M14 (`wallet.balance == saldo reconstruído pelo ledger` para todas as wallets) |
 
-O smoke usa o projeto `jwp-compose-smoke`, portas PG/SQS `56401`/`56402` e HTTP `3090–3099`. Para execuções simultâneas, escolha `SMOKE_PROJECT=jwp-compose-smoke-<sufixo>` e portas distintas com `SMOKE_PG_PORT`, `SMOKE_SQS_PORT` e `SMOKE_APP_PORT_RANGE`; `SMOKE_REPLICAS` aceita 3–10. Evidências e hashes do código ficam em `test-results/compose-smoke/` (saída local gerada, fora do pacote), ou em `SMOKE_OUT`. Falha em qualquer sonda ou limpeza retorna exit 1. O runner resolve a raiz pelo próprio arquivo e pode ser chamado de outro diretório com `bun /caminho/do/projeto/scripts/compose-smoke/run.ts`.
+Isolamento de execuções simultâneas (sufixos, portas, diretórios de saída): [docs/workers.md](docs/workers.md#reprodução-completa-bun-run-testintegration).
 
-Integração, concorrência e recuperação exigem PostgreSQL/SQS reais (nada é mockado) e falham se a infra estiver ausente. A reprodução usa o projeto Compose `jwp-repro`, stacks dedicadas por suíte e observação separada; o runner encerra suas stacks com remoção dos volumes, portanto use ambiente descartável. `JWP_REPRO_SUFFIX` aceita 1–25 caracteres, começando por letra minúscula ASCII ou dígito e continuando com letras minúsculas, dígitos ou hífen; ele isola os nomes de todas essas stacks. Para execuções paralelas, também defina portas e diretórios de saída distintos (`JWP_REPRO_PG_PORT`, `JWP_REPRO_SQS_PORT`, `JWP_REPRO_OBS_SQS_PORT`, `JWP_REPRO_PORT_BASE` e `JWP_REPRO_OUT`). `COMPOSE_PROJECT_NAME` altera o projeto principal; sem sufixo explícito, um nome diferente do padrão também serve de sufixo para as stacks dedicadas e de observação. Vazão e percentis medidos estão em [docs/LOAD_TEST.md](docs/LOAD_TEST.md).
+## Demonstração manual
 
-## Rotas
+Com a stack do [início rápido](#início-rápido) no ar:
 
-| Rota | Função |
+```bash
+API=http://$(docker compose port --index 1 app 3037)
+API2=http://$(docker compose port --index 2 app 3037)
+PLAYER=$(uuidgen)
+WALLET=$(curl -s -X POST $API/wallets -H 'content-type: application/json' \
+  -d "{\"playerId\":\"$PLAYER\",\"initialBalance\":{\"amount\":\"100.00\",\"currency\":\"BRL\"}}" | jq -r .id)
+tx() { # tx <api> <externalId> <kind> <valor> [referência]
+  REF=${5:+,\"referenceExternalTransactionId\":\"$5\"}
+  curl -s -w ' HTTP %{http_code}\n' -X POST $1/wagering/transactions -H 'content-type: application/json' \
+    -H "Idempotency-Key: provider-a:$2" \
+    -d "{\"providerId\":\"provider-a\",\"externalTransactionId\":\"$2\",\"playerId\":\"$PLAYER\",\"walletId\":\"$WALLET\",\"roundId\":\"round-1\",\"gameId\":\"game-1\",\"kind\":\"$3\",\"money\":{\"amount\":\"$4\",\"currency\":\"BRL\"}$REF}"
+}
+```
+
+| Passo | Comando | Resultado esperado |
+|---|---|---|
+| 1. Concorrência | `tx $API bet-a BET 80.00 & tx $API2 bet-b BET 80.00 & wait` | uma resposta `PROCESSED` (HTTP 200) e outra `REJECTED`/`INSUFFICIENT_FUNDS` (HTTP 422), em réplicas diferentes |
+| 2. Saldo | `curl -s $API/wallets/$WALLET` | `balance.amount` = `"20.00"` |
+| 3. Idempotência | repita exatamente o comando do BET que venceu | mesma resposta, com `"idempotentReplay":true`; saldo continua `20.00` |
+| 4. Conflito | `tx $API bet-a BET 10.00` (mesma chave, outro valor) | HTTP 409 `IDEMPOTENCY_CONFLICT` |
+| 5. Reversão | `tx $API refund-1 REFUND 80.00 <bet vencedor>` | `PROCESSED`, saldo `100.00` |
+| 6. Reversão única | `tx $API rollback-1 ROLLBACK 80.00 <bet vencedor>` | HTTP 422 `ALREADY_REVERSED`; saldo continua `100.00` |
+| 7. LOSS | `tx $API loss-1 LOSS 0.00` | `PROCESSED`; saldo e versão não mudam |
+| 8. Ledger e reconciliação | `curl -s $API/wallets/$WALLET/ledger` e `curl -s -X POST $API/wallets/$WALLET/reconciliation -H 'content-type: application/json' -d '{}'` | crédito de abertura, um débito e um crédito; `"consistent":true` e `difference` `0.00` |
+
+`<bet vencedor>` é `bet-a` ou `bet-b`, conforme o passo 1. Payloads, status e códigos: [docs/HTTP.md](docs/HTTP.md).
+
+## Resultados de carga
+
+`bun run test:load` roda contra PostgreSQL e SQS reais, com processos HTTP e de workers separados. É medição de um host de desenvolvimento compartilhado, uma execução por ponto, sem meta de RPS nem SLA. Metodologia e números completos: [docs/LOAD_TEST.md](docs/LOAD_TEST.md).
+
+| Medição (varredura de 8, 32 e 64 VUs; 1 e 3 réplicas) | Resultado |
 |---|---|
-| `POST /wallets` | Abertura |
-| `GET /wallets/:walletId` | Saldo atual |
-| `GET /wallets/:walletId/ledger` | Histórico com cursor opaco |
-| `POST /wallets/:walletId/reconciliation` | Saldo versus ledger, sem reparo |
-| `POST /wagering/transactions` | Comando financeiro; exige `Idempotency-Key` |
-| `GET /wagering/transactions/:transactionId` | Resultado persistido |
-| `GET /providers/:providerId/wagering/transactions/:externalTransactionId` | Consulta por identidade externa |
-| `GET /health/live`, `GET /health/ready`, `GET /metrics` | Diagnóstico |
+| Wallets distribuídas | 528 a 852 req/s; com 3 réplicas e 64 VUs, p99 de 231,6 ms |
+| Hot wallet (todas as requisições na mesma wallet) | 208 a 264 req/s, ~4 ms de seção crítica por transação |
+| Erros HTTP, retries e falhas SQL transitórias | 0 em todas as rodadas |
+| Invariantes ao final (saldo = ledger, eventos completos) | 17/17 em todas as rodadas; downstream sem duplicados nem faltantes |
+| SQS (100 comandos) | 92 a 99 msg/s com 1 processo de workers; 133 a 147 msg/s com 3 |
 
-Payloads, status e códigos de erro: [docs/HTTP.md](docs/HTTP.md).
+A varredura é anterior à mudança para `LockMode` de 13/10/2026; o código entregue foi exercitado por uma canary de correção (3 s, 4 VUs), também com 17/17 invariantes, que não substitui a varredura.
 
-## Limites
+## Requisitos do enunciado → onde estão
 
-- Sem IdP real, autorização entre provedores ou implantação pública; o modo local não é autenticação.
-- Medições em host de desenvolvimento com LocalStack, sem SLA. Na varredura de 8/32/64 VUs com 1 e 3 réplicas, o cenário distribuído ficou entre 528 e 852 req/s e a hot wallet entre 208 e 264 req/s (~4 ms de seção crítica por transação). Com ordem estrita por wallet, a outbox de uma wallet quente drena mais devagar (128–172 s depois de 30 s a 64 VUs). Configurações, percentis e variação: [docs/LOAD_TEST.md](docs/LOAD_TEST.md).
-- `bun run start` não sobe workers; mensageria operacional usa `bun run start:workers`.
-- Publicação SQS é at-least-once (sem exatamente uma vez); a ordem é garantida por wallet (ordem de commit), não entre wallets diferentes.
-- Hot wallet serializa no lock por linha. API financeira habilita BRL.
+| Seção do enunciado | Onde está atendida |
+|---|---|
+| §2 Autenticação | [ADR 010](ARCHITECTURE.md#jwp-adr-010--autenticação): ponto de extensão, sem IdP nesta entrega |
+| §4 Stack e ORM | Stack acima; MikroORM em [ADR 014](ARCHITECTURE.md#jwp-adr-014--mikroorm-como-infraestrutura-transacional-e-sql-explícito); migrations 002–009 em `src/persistence/migrations` |
+| §5 Restrições invioláveis | [Decisões](#decisões-de-arquitetura); mapa falha → mecanismo → teste no fim de [docs/CHALLENGE.md](docs/CHALLENGE.md#mecanismos-e-provas-das-falhas-eliminatórias) |
+| §6 Modelo de domínio | `Money`, `Wallet`, `WagerTransaction`, `WalletLedgerEntry`, `InboxMessage`, `OutboxMessage` em `src/*/domain`; desvios do esqueleto em [ARCHITECTURE.md](ARCHITECTURE.md#desvios-do-esqueleto-do-enunciado) |
+| §7 Regras de negócio e `failureCode` | [ADR 005](ARCHITECTURE.md#jwp-adr-005--referências-estados-e-reversão-única); taxonomia em [docs/HTTP.md](docs/HTTP.md#erros) |
+| §8 Concorrência | [ADR 002](ARCHITECTURE.md#jwp-adr-002--lock-por-wallet-em-transação-curta); matriz M03/M05 |
+| §9 API HTTP | [docs/HTTP.md](docs/HTTP.md) |
+| §10 SQS | [ADR 006](ARCHITECTURE.md#jwp-adr-006--atomicidade-e-inbox), [ADR 007](ARCHITECTURE.md#jwp-adr-007--sqs-e-outbox), [docs/workers.md](docs/workers.md) |
+| §11 Outbox e eventos | [ADR 007](ARCHITECTURE.md#jwp-adr-007--sqs-e-outbox); [contratos de mensageria](contracts/messaging/README.md) |
+| §12 Observabilidade | `/metrics` (transações por status, duplicatas, retries, filas e DLQs, espera de lock, outbox pendente e idade, latência), logs JSON com `correlationId`; [ADR 009](ARCHITECTURE.md#jwp-adr-009--http-códigos-e-diagnóstico) |
+| §13 Testes | [Verificação](#verificação) |
+| Diferencial: teste de carga | [Resultados de carga](#resultados-de-carga) |
 
-## Integridade do pacote
+## Limites e trade-offs
 
-O `.delivery-manifest.json` do pacote exportado lista SHA-256 em `fileSha256`, permitindo conferir os bytes dos arquivos presentes. `sourceCommit` e `generatorSha256` identificam a origem da exportação; não são revisões consultáveis no Git do pacote, que contém um único commit. O manifesto não assina a procedência nem substitui os testes.
+- **Hot wallet é serial.** O lock por linha limita uma wallet muito disputada a ~4 ms por transação; é o preço da decisão sem retries.
+- **Eventos at-least-once.** Um evento pode ser reenviado (crash entre `SendMessage` e `markPublished`); consumidores deduplicam por `eventId`. A ordem é garantida por wallet, não entre wallets.
+- **Frescor da outbox sob carga.** Com ordem estrita por wallet, a outbox de uma wallet quente drena mais devagar: 128–172 s depois de 30 s a 64 VUs. Atraso, não perda.
+- **Reversão mais restritiva que o enunciado.** Após uma REFUND, uma ROLLBACK da mesma BET é rejeitada (`ALREADY_REVERSED`); ROLLBACK de REFUND continua permitido.
+- **Sem autenticação real.** O modo local aceita qualquer chamada e não autentica o `providerId`; uma implantação pública precisa de um adapter de IdP.
+- **Papéis explícitos.** `bun run start` sobe só HTTP; a mensageria precisa de `bun run start:workers` (o Compose já usa os dois papéis).
+- **Moeda.** O modelo suporta escala 2; a API financeira habilita só BRL. Sem conversão cambial.
+- **Medições locais.** A carga usou LocalStack num host compartilhado; não representa AWS nem produção.
 
-## Documentação
+## Mapa da documentação
 
-- [Enunciado](docs/CHALLENGE.md)
-- [Contrato HTTP](docs/HTTP.md)
-- [Arquitetura e ADRs](ARCHITECTURE.md)
-- [Estado do produto](docs/STATUS.md)
-- [Operação dos workers](docs/workers.md)
-- [Teste de carga](docs/LOAD_TEST.md)
-- [Contratos de mensageria](contracts/messaging/README.md)
+| Documento | Conteúdo |
+|---|---|
+| [docs/CHALLENGE.md](docs/CHALLENGE.md) | Enunciado original e mapa falha → mecanismo → teste |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Decisões, alternativas, custos, fluxos detalhados e estados da transação |
+| [docs/HTTP.md](docs/HTTP.md) | Rotas, payloads, status, códigos de erro, `Idempotency-Key` e readiness |
+| [docs/workers.md](docs/workers.md) | Workers, retry/DLQ, SIGTERM e referência operacional (Compose, variáveis, execução local, smoke, reprodução, manifesto do pacote) |
+| [docs/LOAD_TEST.md](docs/LOAD_TEST.md) | Metodologia, resultados e limites do teste de carga |
+| [docs/STATUS.md](docs/STATUS.md) | O que funciona e limitações conhecidas |
+| [contracts/messaging/README.md](contracts/messaging/README.md) | Filas, envelopes e JSON Schemas dos eventos |
+| [infra/postgres/README.md](infra/postgres/README.md) | Roles do PostgreSQL e privilégios de runtime |
+
+## Autor
+
+Thales Calgarotto — [currículo e portfólio](https://tcalgarotto.github.io/)
 
 ## Saídas locais de validação
 
