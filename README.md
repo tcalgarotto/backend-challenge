@@ -144,10 +144,12 @@ Do mais rápido ao mais completo. Os testes de integração usam PostgreSQL e SQ
 | # | Comando | O que prova | Resultado esperado |
 |---|---|---|---|
 | 1 | `bun install --frozen-lockfile && bun run check` | Typecheck, testes unitários de domínio, build e smoke HTTP/DI | exit 0; 120 testes unitários e 2 de smoke, 0 falhas |
-| 2 | `bun run test:integration` | Reprodução completa: migrations, atomicidade, inbox, outbox, retry/DLQ, concorrência multiprocesso, crash recovery e a matriz M01–M14 | exit 0; na última execução registrada: 80 etapas, 398 testes, 0 falhas, 4022 asserções |
+| 2 | `bun run test:integration` | Reprodução completa: migrations, atomicidade, inbox, outbox, retry/DLQ, concorrência multiprocesso, crash recovery e a matriz M01–M14 | exit 0; na execução de referência: 80 etapas, 398 testes, 0 falhas, 4022 asserções |
 | 3 | `bun scripts/reproduce/reproduce.sh --matrix-only` | Só a matriz de aceitação e os controles negativos | exit 0 |
 | 4 | `bun run test:compose` | Sobe `compose.yml` do zero com imagem real e 3 réplicas; confere `/health/ready` de cada uma, schema, role de runtime e as 4 filas com redrive; encerra com `down -v` | exit 0; 18/18 verificações |
 | 5 | `bun run test:load` | Carga contra PostgreSQL/SQS reais, com invariantes ao final | exit 0; 17 invariantes verdadeiras, downstream sem duplicados nem faltantes |
+
+Os resultados da execução de referência, o ambiente, o sourceCommit e os exits estão em [docs/evidence/README.md](docs/evidence/README.md). A reprodução mediu 80 etapas, 398 testes e 4022 asserções; o Compose passou 18/18; a carga padrão após LockMode passou 17/17 invariantes. Os JSONs acompanham a entrega.
 
 A matriz (`tests/matrix/delivery/matrix.test.ts`) cobre os cenários da seção 13 do enunciado:
 
@@ -196,6 +198,8 @@ tx() { # tx <api> <externalId> <kind> <valor> [referência]
 `<bet vencedor>` é `bet-a` ou `bet-b`, conforme o passo 1. Payloads, status e códigos: [docs/HTTP.md](docs/HTTP.md).
 
 ## Resultados de carga
+
+A [execução de referência após LockMode](docs/LOAD_TEST.md#execução-de-referência) tem resultados públicos em [docs/evidence/load/results.json](docs/evidence/load/results.json). A tabela abaixo conserva a varredura histórica, anterior à versão de referência.
 
 `bun run test:load` roda contra PostgreSQL e SQS reais, com processos HTTP e de workers separados. É medição de um host de desenvolvimento compartilhado, uma execução por ponto, sem meta de RPS nem SLA. Metodologia e números completos: [docs/LOAD_TEST.md](docs/LOAD_TEST.md).
 

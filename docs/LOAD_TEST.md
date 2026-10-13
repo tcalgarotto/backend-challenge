@@ -1,6 +1,22 @@
 # Teste de carga (`bun run test:load`)
 
-Experimento de carga contra PostgreSQL e SQS (LocalStack) reais, com N réplicas do serviço completo. Ele mede o que esta máquina entregou nesta configuração. Não define meta de RPS e não é SLA de produção. Os números abaixo vêm de execuções locais. As tabelas com artefato bruto são conferíveis contra `results.json`; medições históricas sem artefato versionado são identificadas explicitamente e não comprovam o ganho. Novas execuções podem ser feitas com `bun run test:load`.
+Experimento de carga contra PostgreSQL e SQS (LocalStack) reais, com N réplicas do serviço completo. A execução de referência abaixo publica os resultados desta versão; as demais medições são históricas e mantêm seus limites originais. Não há meta de RPS nem SLA de produção. Novas execuções podem ser feitas com `bun run test:load`.
+
+## Execução de referência
+
+Execução concluída em 2026-10-13T19:41:57.802879-03:00 (BRT), com sourceCommit `8175cfebdb87a002417a28f4d2779a458fb58caf`, já usando LockMode.PESSIMISTIC_WRITE. O produto exportado é idêntico aos 142 arquivos protegidos da entrega pública 42d3083. Evidências versionadas: [README do ambiente e gates](evidence/README.md), [resumo da carga](evidence/load/summary.json) e [results.json medido e sanitizado](evidence/load/results.json).
+
+Configuração padrão: 3 HTTP + 3 workers, 32 VUs, 20 s por cenário, aquecimento de 5 s, 200 wallets, 500 apostas hot-drain e 1000 comandos SQS. Host compartilhado, PostgreSQL 17.6 e LocalStack 4.9.2 reais; uma rodada, sem SLA.
+
+| Cenário | Requisições | req/s | p50 / p95 / p99 (ms) | Erros HTTP | Retries / falhas SQL transitórias | Máximos amostrados no banco | Lag outbox p50 / p95 / p99 (ms) | Drenagem após carga (ms) |
+|---|---:|---:|---|---:|---|---|---|---:|
+| distributed | 14384 | 718.2 | 34.3 / 93.4 / 235.4 | 0% | 0 / 0 | {"outbox_pending": 19181, "lock_waiters": 1, "active_sessions": 25, "waiting_on_lock": 1} | 20606 / 32378 / 33291 | 33581 |
+| hot-wallet | 4611 | 229.1 | 136.9 / 231.6 / 282.9 | 0% | 0 / 0 | {"outbox_pending": 5695, "lock_waiters": 11, "active_sessions": 15, "waiting_on_lock": 11} | 24907.5 / 43656.2 / 44439 | 43819 |
+| hot-drain | 500 | 259.9 | 112.4 / 168.1 / 221.3 | 0% | 0 / 0 | {"outbox_pending": 155, "lock_waiters": 11, "active_sessions": 12, "waiting_on_lock": 11} | 787 / 1126.1 / 1166 | 1255 |
+
+Exit code 0; 17/17 invariantes verdadeiras, incluindo saldo = ledger. Downstream: 42703/42703 eventIds distintos, 0 duplicados e 0 faltantes. Todos os 6 processos encerrados com exit 0. Os máximos amostrados incluem espera de lock e são diferentes de falhas SQL que esgotaram retries. Configuração, outcomes, percentis, série amostrada e métricas completas estão no JSON.
+
+As medições abaixo são históricas, inclusive a canary curta. Não representam uma nova execução do commit acima e não devem ser usadas como benchmark da versão de referência. Seus artefatos antigos não acompanham este pacote; a evidência pública conferível desta entrega é a execução acima.
 
 ## Como executar
 
@@ -63,7 +79,7 @@ chegar, sem eventos desconhecidos, malformados ou ausentes. O JSON registra
 kinds e kindOutcomes por cenario, incluindo erros; cobertura dos cinco tipos
 confirmados em ambos os cenarios HTTP passa a ser gate, nao meta de performance.
 
-## Validação do mix completo (12/10/2026)
+## Histórico: validação do mix completo (12/10/2026)
 
 Foram executadas duas rodadas novas: `LOAD_REPLICAS=1` e `3`, com
 `LOAD_WORKERS` respectivamente 1 e 3, 8 VUs, 10 s por cenário HTTP,
@@ -140,7 +156,7 @@ A diferença entre V1 e V2 afeta só o consumer SQS. O caminho HTTP, a outbox e 
 
 Foi feita uma execução por configuração, sem repetição. As diferenças pequenas entre execuções, como 252,8 contra 258,1 contra 264,1 req/s no `hot-wallet`, estão dentro do ruído esperado e não devem ser lidas como tendência.
 
-## Resultados
+## Resultados históricos
 
 Comandos executados:
 
@@ -215,7 +231,7 @@ Todas passaram nas três execuções:
 
 As réplicas encerraram com exit 0 após SIGTERM. Os únicos warnings de log foram os 400 `http.request` dos 422 esperados do `hot-drain`.
 
-## Análise
+## Análise histórica
 
 **Hot wallet: o teto é a serialização no lock da linha.** A vazão ficou entre 253 e 264 req/s com 1, 3 ou 6 réplicas, ou seja, cerca de 3,8–4,0 ms de seção crítica por transação: lock da wallet, transação, ledger, dois eventos de outbox e commit. Nenhum componente estava perto de saturar a CPU. Mais réplicas só trazem mais conexões para a fila do mesmo lock: o máximo de sessões esperando foi de 3 para 11 e depois para 18, e o p95 foi de 183 para 264 e depois para 473 ms. O pool de 4 conexões por réplica limita quantas transações esperam no PostgreSQL. O restante espera no pool da aplicação, e por isso o `lock_timeout` de 1 s não foi atingido e não houve retry nem 503 nesta carga. Esse é o comportamento previsto pelo desenho (ADR de lock por wallet): correção em vez de paralelismo na mesma wallet.
 
@@ -231,7 +247,7 @@ As réplicas encerraram com exit 0 após SIGTERM. Os únicos warnings de log for
 
 **Consumer SQS nas versões iniciais: limitado por processo.** A vazão foi de 30,5, 83,1 e 140,8 msg/s com 1, 3 e 6 réplicas, ou seja, ~23–30 por réplica. O consumer processa as até 10 mensagens de cada receive em sequência e pausa 250 ms entre polls. Com `MessageGroupId=walletId`, réplicas diferentes avançam grupos diferentes. A latência fim a fim de vários segundos é tempo de fila, porque os 1000 comandos chegaram em ~0,3 s.
 
-## Varredura de VUs
+## Varredura histórica de VUs
 
 **Pergunta:** onde a vazão para de subir e o que satura, com HTTP e workers em processos separados (`LOAD_WORKERS` = réplicas), PostgreSQL e LocalStack reais. Sem meta de RPS; uma execução por ponto.
 
@@ -296,7 +312,7 @@ Outra entrega do mesmo desafio publica um teste de carga com 64 VUs, 30 s, 200 w
 
 As conclusões estruturais coincidem: a hot wallet é limitada pelo tempo da seção crítica por transação (lá ~8 ms, aqui ~4–5 ms, com hops de rede virtual a mais lá); laço fechado com 64 VUs mede principalmente fila; e a correção (0 erros, saldo = ledger, nada duplicado) se mantém sob saturação nas duas.
 
-## O que a carga encontrou → corrigimos
+## Histórico: o que a carga encontrou → corrigimos
 
 **Achado.** O publisher da outbox tinha teto fixo de ~35 eventos/s por réplica: lote de 10, um `SendMessage` por evento e pausa de 250 ms entre lotes **mesmo com backlog**. Com 2 eventos por transação, qualquer carga acima de ~17 tx/s por réplica acumulava atraso linear (lag p50 de minutos).
 
@@ -360,7 +376,7 @@ Leitura: separar os papéis remove a disputa de pool/CPU no processo HTTP. Com 3
 
 A versão compilada dessas medições de isolamento não foi preservada com artefato bruto. Não afirmamos que antecede a ordem estrita por wallet (V4), que serializa a publicação de uma wallet quente em um publisher por vez; os números verificáveis de V4 estão na varredura de VUs. Continua sem `SendMessageBatch`: o teto da outbox é o claim mais um `markPublished` por evento, em transações curtas.
 
-## Canary de correção da versão entregue (13/10/2026)
+## Canary histórica de correção (13/10/2026)
 
 Depois da mudança de LockMode, o gate final rodou `bun run test:load` sobre o pacote de entrega, com 3 HTTP + 3 workers, 4 VUs, 8 wallets, 3 s por cenário HTTP, aquecimento de 1 s, 500 BETs no hot-drain e 20 comandos SQS em 4 wallets. **É uma canary de correção, não benchmark nem SLA:** a janela de 3 s e os 4 VUs servem para exercitar o código final sob concorrência real, não para medir capacidade. Os req/s abaixo não se comparam às tabelas anteriores nem as substituem.
 

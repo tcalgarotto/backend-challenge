@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "8175cfebdb87a002417a28f4d2779a458fb58caf",
+  "attempt": 1,
+  "suite": "integration",
+  "command": "bun run test:integration",
+  "startedAtBrt": "2026-10-13T19:22:45.642442-03:00",
+  "status": "failed",
+  "exitCode": 1,
+  "finishedAtBrt": "2026-10-13T19:31:41.690294-03:00",
+  "elapsedSeconds": 536.05,
+  "steps": 80,
+  "failedSteps": 1,
+  "testsPassed": 397,
+  "testsFailed": 2,
+  "assertions": 4015,
+  "unexpectedSteps": [
+    {
+      "commandLabel": "matrix: tests/matrix/delivery",
+      "exitCode": 1,
+      "verdict": "FAIL"
+    }
+  ],
+  "failureClassification": "M14 timeout and cleanup-hook timeout; cause not established. No product or test changed for the second complete run."
+}

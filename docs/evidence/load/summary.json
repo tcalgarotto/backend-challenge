@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "8175cfebdb87a002417a28f4d2779a458fb58caf",
+  "suite": "load",
+  "command": "bun run test:load",
+  "startedAtBrt": "2026-10-13T19:39:03.786777-03:00",
+  "finishedAtBrt": "2026-10-13T19:41:57.802653-03:00",
+  "elapsedSeconds": 174.02,
+  "exitCode": 0,
+  "configuration": {
+    "replicas": 3,
+    "workers": 3,
+    "concurrency": 32,
+    "durationS": 20,
+    "warmupS": 5,
+    "wallets": 200,
+    "hotDrainBets": 500,
+    "hotDrainBalance": "100.00",
+    "sqsMessages": 1000,
+    "sqsWallets": 100,
+    "drainTimeoutS": 900,
+    "pgPort": 56432,
+    "sqsPort": 56566,
+    "project": "jwp-load",
+    "keepInfra": false
+  },
+  "invariantsPassed": 17,
+  "invariantsTotal": 17,
+  "allInvariantsPassed": true,
+  "replicaExitCodes": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "downstream": {
+    "outboxEvents": 42703,
+    "deliveries": 42703,
+    "distinctEventIds": 42703,
+    "duplicateEventIds": 0,
+    "missingEventIds": 0,
+    "unknownEventIds": 0,
+    "malformed": 0
+  },
+  "resultsFile": "results.json"
+}

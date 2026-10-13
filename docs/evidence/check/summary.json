@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "8175cfebdb87a002417a28f4d2779a458fb58caf",
+  "suite": "check",
+  "command": "bun install --frozen-lockfile && bun run check",
+  "startedAtBrt": "2026-10-13T19:32:29.606969-03:00",
+  "finishedAtBrt": "2026-10-13T19:32:39.608379-03:00",
+  "elapsedSeconds": 10.0,
+  "exitCode": 0,
+  "testsPassed": 122,
+  "testsFailed": 0,
+  "assertions": 777,
+  "unitTestsPassed": 120,
+  "smokeTestsPassed": 2,
+  "frozenInstallPassed": true,
+  "typecheckPassed": true,
+  "buildPassed": true
+}

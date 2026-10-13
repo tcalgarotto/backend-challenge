@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "8175cfebdb87a002417a28f4d2779a458fb58caf",
+  "suite": "compose",
+  "command": "bun run test:compose",
+  "startedAtBrt": "2026-10-13T19:38:31.645270-03:00",
+  "finishedAtBrt": "2026-10-13T19:39:03.651957-03:00",
+  "elapsedSeconds": 32.0,
+  "exitCode": 0,
+  "replicas": 3,
+  "checksPassed": 18,
+  "checksFailed": 0,
+  "checks": [
+    {
+      "name": "fresh Compose reset",
+      "passed": true
+    },
+    {
+      "name": "expected services, no proxy",
+      "passed": true
+    },
+    {
+      "name": "all HTTP replicas healthy",
+      "passed": true
+    },
+    {
+      "name": "PostgreSQL and SQS healthy",
+      "passed": true
+    },
+    {
+      "name": "migration and runtime role setup completed",
+      "passed": true
+    },
+    {
+      "name": "replicas run the same compiled Docker image",
+      "passed": true
+    },
+    {
+      "name": "replica 1 /health/ready",
+      "passed": true
+    },
+    {
+      "name": "replica 2 /health/ready",
+      "passed": true
+    },
+    {
+      "name": "replica 3 /health/ready",
+      "passed": true
+    },
+    {
+      "name": "PostgreSQL round trip, migrated schema and safe runtime LOGIN",
+      "passed": true
+    },
+    {
+      "name": "database starts without financial data",
+      "passed": true
+    },
+    {
+      "name": "SQS round trip wager-transactions.fifo",
+      "passed": true
+    },
+    {
+      "name": "SQS round trip wager-transactions-dlq.fifo",
+      "passed": true
+    },
+    {
+      "name": "SQS round trip wager-events.fifo",
+      "passed": true
+    },
+    {
+      "name": "SQS round trip wager-events-dlq.fifo",
+      "passed": true
+    },
+    {
+      "name": "SQS wager-transactions redrive",
+      "passed": true
+    },
+    {
+      "name": "SQS wager-events redrive",
+      "passed": true
+    },
+    {
+      "name": "down -v removes all smoke resources",
+      "passed": true
+    }
+  ],
+  "imageIds": [
+    "sha256:d13b75d9d81ef33af655657d9f01d60a1e5f649d5bc3c287d7e0c7afebd81c74"
+  ],
+  "sourceSha256": {
+    "scripts/compose-smoke/run.ts": "8f3775c8de813d67b07529c5700644b35d9be01af21dc0bb3e2a76d4ab6dbe05",
+    "Dockerfile": "1fdcbe38f6ae0469c4ac1fc22c18442822a2c17ea57176c0b2bcc8318c51f7a8",
+    "compose.yml": "f79ab69a1f89c2b3f1f98f71583b389521305576e7f845f9144ae7e298d447e3",
+    "compose.db.yml": "ca9472d4462864599cd44d5d7d9910c744a2c0ca3e8e40f2ab4f9c0cdcafb92f",
+    "compose.sqs.yml": "95c6f87c4b3fbeaddaf05158d67a51c3ab68dc125d9bade9875224715b802447",
+    "package.json": "4a0914b54db74a9f91d9aa9b80d735bc2ec5a50638e618ecbc7d30ada51a7d89",
+    "bun.lock": "8a7a6325e3fa67f541a5c70545fef08d8ce4c84caa35a83a4f30fad7f59f8654",
+    "tsconfig.json": "b2c134a43c847295e8b8ebf68b77bbb28c65b3bd9b092b537a8badb85ef9fd13",
+    "tsconfig.build.json": "d5dd766504df9366d923f5c4557d33318555d38503b48b1f0c70afb05f271139",
+    "infra/postgres/README.md": "fd8baa8fca3f53438716a66fad875e38dce1ddcd3a0a891c84515f633a41572c",
+    "infra/sqs/README.md": "8ed511c5e376d5eeb0568665f2ff068d6c11954026f52fb06102f50556735716",
+    "infra/sqs/init/01-create-queues.sh": "0b11aa09ae2e524a657c28457a55d99a0274472162a1397017edee78da4ceb14",
+    "src/app.module.ts": "9ce110c3c1dea034ed5a4b352ffb599ae3d1a21c2f69519bfdf08a53d8baec26",
+    "src/config/env.ts": "b1a501ce64b43b0cb9b3b9e130e627413ea0001546448c66b057d15209f779bf",
+    "src/main.ts": "aab0112825cd0520e8eed9dc661a8fb00ab0d4d6ca8dbad535d0a1d68230fe8c",
+    "src/messaging/domain/inbox-message.ts": "96da4f56357510fc681a5edc4636850d4c5159a3fe3d302e3a59edbc8267211a",
+    "src/messaging/domain/outbox-message.ts": "86fbff4317c03d60b6175dbe76487df97963e30139af01844f5aee7a10cdaff2",
+    "src/messaging/outbox/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/messaging/outbox/sql-outbox-store.ts": "a9799076ca7e91db021b1a43daadeadc335def4fb13ea7c9e0f2cbe343e056af",
+    "src/messaging/outbox/sqs-event-consumer.ts": "11bb9bfe18994980ee74b3984913b10b0bd990c0b65160cd9bf82df8150953d9",
+    "src/messaging/outbox/sqs-outbox-publisher.ts": "cfddfb68be2b7d00cb1dca87c445886e38c7b1d34b6ced73584632c113442444",
+    "src/messaging/outbox/validate-event-data.ts": "0a7ca11cd19af182cbccecbad20507ac5cb4c164ac89157918066656f0718f0f",
+    "src/messaging/pending-reference-scheduler.ts": "5f960a4d207a30d973ac5732f4039bb1b80f4b2cd68118b67505a5600a54f99a",
+    "src/messaging/scheduler/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/messaging/sql-inbox-process-wager-store.ts": "361e30e5f2e6ec1b803fd61dba577e765bd939c34b32df23de880b3afc6e8efe",
+    "src/messaging/sqs-wager-consumer.ts": "08459b9c546b9084f5a48be14c6f70f3616192d74798a2f38020b5f8f0adc264",
+    "src/messaging/wager-message.ts": "ab16d687408f7d22343e64a2c6c3449ff591adf52ca318fb969f059fa023a47f",
+    "src/observability/http.ts": "dbd403e380065e61e294960e35f13fd89680a8a1e86f0d5bce9f569e5bf57fcc",
+    "src/observability/log.ts": "ecb4b765918ffd8435f9c496844e4c1b8fabb51125388de7d2ec26e53a2f65bc",
+    "src/observability/messaging.ts": "89942cc80539bae96a1ae6997e7df4c0ea98aaeb084b09b1f3037197391f4c00",
+    "src/observability/metrics.ts": "86d270cdc7bb628c302248d54a4c131d1400e1fe0f5fe27c20585bc75d2d7cee",
+    "src/observability/observability.ts": "e03783d3b29e9952168fba497247ed2b59e68235b4b15e70458de854fc707b19",
+    "src/observability/readiness.ts": "bec5c10ee0cea9c0327ddcdd2c3d30fc9b18b193f19e9b3a3a39912e913c6da2",
+    "src/persistence/financial-orm.ts": "3923a24af90ad88f8ec3a839b4345638b82c328620e9c2b9699f41eae7a03956",
+    "src/persistence/migrate.ts": "524ba8b59f91fbf429790dc1af2aa2511eb368dc6b394343ad8908d9099f02b5",
+    "src/persistence/migrations/Migration202610110002.ts": "1e28cb73f62f1d6c4f35ec77387e46061062627fe3140d261d2a195881f3ee40",
+    "src/persistence/migrations/Migration202610110003.ts": "2c2c04d06df1748ada8c52848dc2b812c502a197fa0d5f6d3c80820ae8b0338a",
+    "src/persistence/migrations/Migration202610110004.ts": "883231a61f95f9bd634bd255982d76649a22a1ccd5fcb83d1273c1f28c771d45",
+    "src/persistence/migrations/Migration202610120005.ts": "c3816734b9b744c190fe118e622823ab42b7926b5378f3f58c07e109d2bbe3b7",
+    "src/persistence/migrations/Migration202610120006.ts": "200fd0464229b0561bbd5c013e780e819f8f1ba72fd7acea5f929d8d05cf1e61",
+    "src/persistence/migrations/Migration202610120007.ts": "30e003951d34705f5b63688d12ca1b5ab4fba57898bd1f1b571fbb21a22b744a",
+    "src/persistence/migrations/Migration202610120008.ts": "1621efc1fb3b2b279e8f308e390819093ea485c5678e678ea7814e39565b82c2",
+    "src/persistence/migrations/Migration202610130009.ts": "52e523162c4019e98be17d84073f729a0d150fd3de97c1076d9cfbe32bce2000",
+    "src/persistence/migrations/financial-sql.ts": "eefca42f1c2bd4e102a524f3b790b46bbf91a301d1c42f9735a595ccfa6902d8",
+    "src/persistence/postgres-connection-failure.ts": "8017794cf862f83d9bc1c49cef3d447d0a7ee392beb493518c0862ea6e3eca02",
+    "src/runtime/workers.ts": "be6f4329fef1dfdd850c0dcdfabcf5768288dc1264460df7038eec42f6ba2529",
+    "src/shared/domain/domain-error.ts": "b3053963a9e717f673aca92bf6e22f7d5606c8dfb203b136300c487a1ada6c74",
+    "src/shared/domain/exact-decimal.ts": "dada23e76861a4311bddc86668ec6628369f89106ee058146ee383c4f95eeef1",
+    "src/shared/domain/identifiers.ts": "882f40a3295eba1076886123a1e6a955bf20d7d09febbeaf41f4820b53383dc6",
+    "src/shared/domain/money.ts": "41736da4e1bcc34b3b2dc01e66b5a04eb160a59cb8e1a8d8c73a0c80e7f52473",
+    "src/shared/events/integration-event.ts": "7b74f1a8ecae944ced47e72452620d0f99f0ad034158de6d7bfddf15a8609522",
+    "src/shared/http/invalid-json-filter.ts": "d455357b87d52463d4a391a88ea1db0cf40df5cb1dcf93c0d441ce818724d5f6",
+    "src/shared/http/provider-identity.ts": "49012567d476fefab2838b9ed630dfa4ce2aa1258cc6035b387031ee3c393a9d",
+    "src/shared/http/typed-response.ts": "47965ddcee05b89ca77ab5f07d4d06b5ac9dcce5e7f4362bcf2c4edc7f656e1d",
+    "src/shared/infrastructure/permanent-wager-failure.ts": "269649991178b53f87d9dfd65bf1da1a0a8479f4865a813487854624cbe33c2f",
+    "src/shared/infrastructure/sql-transaction.ts": "083475b1e897abc65cfd3d1c7b6b8a61f27454d0530e4a0d889696586e235f68",
+    "src/wagering/application/process-wager.ts": "26d15c6ed415f740656fc79863120c22d3fa1a74df04297f43724d861855a74c",
+    "src/wagering/application/transaction-queries.ts": "c2704f8924f1a942bee1de307419e742eb460f19edf300bb2f12d686bb65125a",
+    "src/wagering/domain/wager-error.ts": "d6b6c43060b52cedb50974593e5a87d8c3375c843edc26501795a762afe1d6fe",
+    "src/wagering/domain/wager-transaction.ts": "be483394e6f65aa21ee10a710948e75d254066da086ed8031decda58811c402d",
+    "src/wagering/events/wager-events.ts": "dbc5147cf9c50f173d2567c36817a11832df7da133a2c060737b4fcdc7e14039",
+    "src/wagering/http/wagering.module.ts": "1ed717a30e19d317f15d3b4580252c226d176a927f8de370b1bdbb4fe949b852",
+    "src/wagering/infrastructure/sql-process-wager-store.ts": "d1ac1de84b1d533b9bf34a93d7aecf91ba87bb05d56d3c04dab38b342c42e30d",
+    "src/wagering/infrastructure/sql-transaction-query-store.ts": "2191ac0a0deaa55b30dbc368bc94e68e6bbe6c4c11e14ee35082082462539dcc",
+    "src/wallet/application/open-wallet.ts": "f5f7b32d92443a52a590aad14e291c3f24c2d9d0299c4e9b9307d582901c022a",
+    "src/wallet/application/reconcile-wallet.ts": "94bc2425bd44e11bfec37407a989307e77eb557ff08b218ac87432e8d33fa7ff",
+    "src/wallet/application/wallet-queries.ts": "9167d6c55eed030f218b708b7fb6c71ddd42f9d31b986061faa82672f0e3515a",
+    "src/wallet/domain/wallet-ledger-entry.ts": "fca6dc897f8234b5b0975fa9b111a100ecccbbded0cecfaa9155332fb92ad649",
+    "src/wallet/domain/wallet.ts": "11696629a8f454a01f3a354e9d7572d23c3ab0fb23e3a6bf82c8b71a3a9725c8",
+    "src/wallet/events/wallet-balance-changed.ts": "852dc70d2551a4fea43b200100bf11b7e1d3048ab2efab803b93503f3c841191",
+    "src/wallet/http/wallet.module.ts": "c271ab3cd86cd7f17ae4a33c15c62377bfd04e6545983fb086fca734864a6cdc",
+    "src/wallet/infrastructure/reconciliation-signals.ts": "bc5bfec4a9a08c74dce14d971c4578d5e612622c8f8d3e69858f7cb77bcf636e",
+    "src/wallet/infrastructure/sql-wallet-opening-store.ts": "ff73d0cabe96cc7d0552cbdc1b9a91bdb2741e3571c0bc4f63898428efa2853e",
+    "src/wallet/infrastructure/sql-wallet-query-store.ts": "243eb21d1b1d81129a9b0cd6110ccda562ff8651ba6003140c5dfc8484e2ee40"
+  }
+}
