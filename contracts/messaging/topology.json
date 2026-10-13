@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "projectId": "JWP",
+  "kind": "messaging-topology",
+  "provisioning": "compose.sqs.yml + infra/sqs/init/01-create-queues.sh",
+  "queues": [
+    {
+      "name": "wager-transactions.fifo",
+      "role": "commands",
+      "schema": "contracts/messaging/wager-transaction-requested.schema.json",
+      "consumer": "wager-transactions-consumer",
+      "deadLetterQueue": "wager-transactions-dlq.fifo",
+      "attributes": {
+        "FifoQueue": "true",
+        "ContentBasedDeduplication": "false",
+        "VisibilityTimeout": "30",
+        "ReceiveMessageWaitTimeSeconds": "20",
+        "MessageRetentionPeriod": "345600",
+        "maxReceiveCount": "5"
+      }
+    },
+    {
+      "name": "wager-transactions-dlq.fifo",
+      "role": "commands-dlq",
+      "attributes": {
+        "FifoQueue": "true",
+        "ContentBasedDeduplication": "false",
+        "MessageRetentionPeriod": "1209600"
+      }
+    },
+    {
+      "name": "wager-events.fifo",
+      "role": "events",
+      "schema": "contracts/messaging/integration-event.schema.json",
+      "consumer": "wager-events-demo-consumer",
+      "deadLetterQueue": "wager-events-dlq.fifo",
+      "attributes": {
+        "FifoQueue": "true",
+        "ContentBasedDeduplication": "false",
+        "VisibilityTimeout": "30",
+        "ReceiveMessageWaitTimeSeconds": "20",
+        "MessageRetentionPeriod": "345600",
+        "maxReceiveCount": "5"
+      }
+    },
+    {
+      "name": "wager-events-dlq.fifo",
+      "role": "events-dlq",
+      "attributes": {
+        "FifoQueue": "true",
+        "ContentBasedDeduplication": "false",
+        "MessageRetentionPeriod": "1209600"
+      }
+    }
+  ],
+  "producerRules": {
+    "wager-transactions.fifo": {
+      "MessageGroupId": "data.walletId",
+      "MessageDeduplicationId": "messageId",
+      "body": "WagerTransactionRequested envelope as UTF-8 JSON"
+    },
+    "wager-events.fifo": {
+      "MessageGroupId": "data.walletId",
+      "MessageDeduplicationId": "eventId",
+      "body": "IntegrationEvent envelope (toJSON) as UTF-8 JSON"
+    }
+  },
+  "consumerRules": [
+    "Inbox key is (consumerName, envelope messageId); the AWS MessageId and receiptHandle never replace it.",
+    "DeleteMessage only after the SQL commit; a failed DeleteMessage is a safe redelivery.",
+    "Business rejection is persisted and acked; transient infrastructure errors are not acked; invalid bodies are left for redrive to the DLQ after maxReceiveCount.",
+    "FIFO grouping and the 5-minute SQS deduplication window are optimisations; the database constraints remain the guarantee.",
+    "The events consumer deduplicates eventId durably; the commands consumer never reads wager-events.fifo."
+  ]
+}

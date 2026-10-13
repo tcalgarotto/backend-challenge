@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.env
+.env.*
+tests
+docs
+scripts
+test-results
+.delivery-manifest.json
+**/*.test.ts
+**/*.spec.ts
+src/**/tests

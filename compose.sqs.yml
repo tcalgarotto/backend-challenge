@@ -1,0 +1,16 @@
+services:
+  sqs:
+    image: localstack/localstack:4.9.2
+    environment:
+      SERVICES: sqs
+      SQS_ENDPOINT_STRATEGY: path
+      EAGER_SERVICE_LOADING: "1"
+    ports:
+      - "127.0.0.1:${JWP_SQS_PORT:-54566}:4566"
+    volumes:
+      - ./infra/sqs/init:/etc/localstack/init/ready.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "s=$$(curl -sf http://localhost:4566/_localstack/init/ready) && echo \"$$s\" | grep -q '\"completed\": true' && echo \"$$s\" | grep -q SUCCESSFUL && ! echo \"$$s\" | grep -q ERROR"]
+      interval: 2s
+      timeout: 3s
+      retries: 60

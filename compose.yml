@@ -1,0 +1,82 @@
+# Local delivery stack: PostgreSQL + LocalStack SQS + migrations + N app replicas.
+#   docker compose up -d --build --wait            (3 replicas)
+#   JWP_APP_REPLICAS=5 docker compose up -d --build --wait
+#   APP_ROLES=workers docker compose up -d --build --wait   (workers only; no HTTP readiness)
+# Host ports: each replica gets one port from JWP_APP_PORT_RANGE, assigned by Compose (not stable per replica).
+#   docker compose port --index 1 app 3037
+# compose.db.yml / compose.sqs.yml stay standalone for scripts/load and scripts/reproduce.
+include:
+  - compose.db.yml
+  - compose.sqs.yml
+
+# network: host only for the image build (bun install); avoids broken bridge DNS on some hosts.
+x-build: &build
+  context: .
+  network: host
+
+x-app-env: &app-env
+  AWS_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  JWP_SQS_ENDPOINT: http://sqs:4566
+  JWP_SQS_COMMAND_QUEUE_URL: http://sqs:4566/queue/us-east-1/000000000000/wager-transactions.fifo
+  JWP_SQS_EVENT_QUEUE_URL: http://sqs:4566/queue/us-east-1/000000000000/wager-events.fifo
+  # DLQs are observed too: depth is exported as jwp_sqs_queue_messages{queue=...-dlq.fifo} (challenge §12).
+  JWP_SQS_QUEUE_URLS: http://sqs:4566/queue/us-east-1/000000000000/wager-transactions-dlq.fifo,http://sqs:4566/queue/us-east-1/000000000000/wager-events-dlq.fifo
+
+services:
+  migrate:
+    build: *build
+    image: jwp-app:local
+    command: ["bun", "src/persistence/migrate.ts"]
+    environment:
+      JWP_MIGRATION_DATABASE_URL: postgresql://jwp:jwp_local@postgres:5432/jwp
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  # Runtime LOGIN (non-superuser, member of jwp_runtime). Idempotent.
+  db-role:
+    image: postgres:17.6-alpine
+    environment:
+      PGPASSWORD: jwp_local
+    command:
+      - psql
+      - "-h"
+      - postgres
+      - "-U"
+      - jwp
+      - "-d"
+      - jwp
+      - "-v"
+      - ON_ERROR_STOP=1
+      - "-c"
+      - "DO $$$$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='jwp_api') THEN CREATE ROLE jwp_api LOGIN PASSWORD 'jwp_api_local'; END IF; END $$$$; GRANT jwp_runtime TO jwp_api;"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: "no"
+
+  app:
+    build: *build
+    image: jwp-app:local
+    environment:
+      <<: *app-env
+      APP_ROLES: ${APP_ROLES:-http,workers}
+      HOST: 0.0.0.0
+      PORT: "3037"
+      JWP_DATABASE_URL: postgresql://jwp_api:jwp_api_local@postgres:5432/jwp
+      JWP_WORKER_INTERVAL_MS: ${JWP_WORKER_INTERVAL_MS:-250}
+    deploy:
+      replicas: ${JWP_APP_REPLICAS:-3}
+    ports:
+      - "127.0.0.1:${JWP_APP_PORT_RANGE:-3037-3046}:3037"
+    depends_on:
+      db-role: { condition: service_completed_successfully }
+      sqs: { condition: service_healthy }
+    healthcheck:
+      # HTTP readiness only when the http role is enabled; workers-only replicas report healthy while the process runs.
+      test: ["CMD-SHELL", "case \",$${APP_ROLES},\" in *,http,*) wget -qO- http://127.0.0.1:3037/health/ready >/dev/null ;; *) kill -0 1 ;; esac"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    restart: unless-stopped

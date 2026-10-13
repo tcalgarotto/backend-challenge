@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jwp.local/contracts/messaging/wager-transaction-requested.schema.json",
+  "title": "WagerTransactionRequested envelope (wager-transactions.fifo)",
+  "description": "Command envelope from docs/CHALLENGE.md section 10. Unknown fields are rejected. OPENING is internal and cannot be submitted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["messageId", "type", "occurredAt", "data"],
+  "properties": {
+    "messageId": { "$ref": "#/$defs/messageId" },
+    "type": { "const": "WagerTransactionRequested" },
+    "occurredAt": { "$ref": "#/$defs/instant" },
+    "data": { "$ref": "#/$defs/data" }
+  },
+  "$defs": {
+    "messageId": {
+      "description": "Logical envelope id; inbox key with consumerName and SQS MessageDeduplicationId. SQS limits: 1-128 printable ASCII.",
+      "type": "string",
+      "pattern": "^[\\x21-\\x7E]{1,128}$"
+    },
+    "instant": {
+      "description": "ISO-8601 UTC.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+    },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "externalId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "money": {
+      "description": "MoneyProps: exact decimal string, scale 2, non-negative on input, max 999999999999999999.99.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "string", "pattern": "^(0|[1-9][0-9]{0,17})\\.[0-9]{2}$" },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+      }
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["providerId", "externalTransactionId", "idempotencyKey", "playerId", "walletId", "roundId", "gameId", "kind", "money"],
+      "properties": {
+        "providerId": { "$ref": "#/$defs/externalId" },
+        "externalTransactionId": { "$ref": "#/$defs/externalId" },
+        "idempotencyKey": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "playerId": { "$ref": "#/$defs/uuid" },
+        "walletId": { "$ref": "#/$defs/uuid" },
+        "roundId": { "$ref": "#/$defs/externalId" },
+        "gameId": { "$ref": "#/$defs/externalId" },
+        "kind": { "enum": ["BET", "WIN", "LOSS", "REFUND", "ROLLBACK"] },
+        "money": { "$ref": "#/$defs/money" },
+        "referenceExternalTransactionId": { "$ref": "#/$defs/externalId" }
+      },
+      "allOf": [
+        {
+          "description": "REFUND and ROLLBACK require a reference (REFERENCE_REQUIRED).",
+          "if": { "properties": { "kind": { "enum": ["REFUND", "ROLLBACK"] } } },
+          "then": { "required": ["referenceExternalTransactionId"] }
+        },
+        {
+          "description": "BET and LOSS do not accept a reference (docs/HTTP.md, input rules).",
+          "if": { "properties": { "kind": { "enum": ["BET", "LOSS"] } } },
+          "then": { "not": { "required": ["referenceExternalTransactionId"] } }
+        },
+        {
+          "description": "LOSS carries exactly 0.00.",
+          "if": { "properties": { "kind": { "const": "LOSS" } } },
+          "then": { "properties": { "money": { "properties": { "amount": { "const": "0.00" } } } } }
+        },
+        {
+          "description": "BET, WIN, REFUND and ROLLBACK carry a positive amount.",
+          "if": { "properties": { "kind": { "enum": ["BET", "WIN", "REFUND", "ROLLBACK"] } } },
+          "then": { "properties": { "money": { "properties": { "amount": { "not": { "const": "0.00" } } } } } }
+        }
+      ]
+    }
+  }
+}

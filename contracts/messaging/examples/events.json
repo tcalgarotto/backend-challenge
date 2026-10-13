@@ -1,0 +1,298 @@
+{
+  "schema": "contracts/messaging/integration-event.schema.json",
+  "valid": [
+    {
+      "name": "processed-bet",
+      "message": {
+        "eventId": "0192f2a0-0000-7000-8000-000000000001",
+        "eventType": "WagerTransactionProcessed",
+        "aggregateId": "0192f298-345e-7e38-af88-e43f851a819d",
+        "correlationId": "msg-123",
+        "causationId": "msg-123",
+        "occurredAt": "2026-07-29T15:00:00.120Z",
+        "version": 1,
+        "data": {
+          "transactionId": "0192f298-345e-7e38-af88-e43f851a819d",
+          "providerId": "provider-a",
+          "externalTransactionId": "transaction-123",
+          "walletId": "0192f291-27dd-7d3f-8071-5f8685deef37",
+          "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+          "roundId": "round-987",
+          "gameId": "fortune-chimp",
+          "kind": "BET",
+          "money": {
+            "amount": "25.00",
+            "currency": "BRL"
+          },
+          "balance": {
+            "amount": "975.00",
+            "currency": "BRL"
+          },
+          "walletVersion": 2,
+          "processedAt": "2026-07-29T15:00:00.120Z"
+        }
+      }
+    },
+    {
+      "name": "processed-opening",
+      "message": {
+        "eventId": "0192f2a0-0000-7000-8000-000000000002",
+        "eventType": "WagerTransactionProcessed",
+        "aggregateId": "0192f292-0000-7000-8000-000000000001",
+        "correlationId": "req-open-1",
+        "occurredAt": "2026-07-29T14:00:00.000Z",
+        "version": 1,
+        "data": {
+          "transactionId": "0192f292-0000-7000-8000-000000000001",
+          "walletId": "0192f291-27dd-7d3f-8071-5f8685deef37",
+          "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+          "kind": "OPENING",
+          "money": {
+            "amount": "1000.00",
+            "currency": "BRL"
+          },
+          "balance": {
+            "amount": "1000.00",
+            "currency": "BRL"
+          },
+          "walletVersion": 1,
+          "processedAt": "2026-07-29T14:00:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "rejected-insufficient-funds",
+      "message": {
+        "eventId": "0192f2a0-0000-7000-8000-000000000003",
+        "eventType": "WagerTransactionRejected",
+        "aggregateId": "0192f298-0000-7000-8000-000000000003",
+        "correlationId": "msg-200",
+        "occurredAt": "2026-07-29T15:01:00.000Z",
+        "version": 1,
+        "data": {
+          "transactionId": "0192f298-0000-7000-8000-000000000003",
+          "providerId": "provider-a",
+          "externalTransactionId": "transaction-200",
+          "walletId": "0192f291-27dd-7d3f-8071-5f8685deef37",
+          "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+          "roundId": "round-988",
+          "gameId": "fortune-chimp",
+          "kind": "BET",
+          "money": {
+            "amount": "80.00",
+            "currency": "BRL"
+          },
+          "failureCode": "INSUFFICIENT_FUNDS",
+          "balance": {
+            "amount": "20.00",
+            "currency": "BRL"
+          },
+          "walletVersion": 3,
+          "rejectedAt": "2026-07-29T15:01:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "balance-changed",
+      "message": {
+        "eventId": "0192f2a0-0000-7000-8000-000000000004",
+        "eventType": "WalletBalanceChanged",
+        "aggregateId": "0192f291-27dd-7d3f-8071-5f8685deef37",
+        "correlationId": "msg-123",
+        "causationId": "msg-123",
+        "occurredAt": "2026-07-29T15:00:00.120Z",
+        "version": 1,
+        "data": {
+          "walletId": "0192f291-27dd-7d3f-8071-5f8685deef37",
+          "transactionId": "0192f298-345e-7e38-af88-e43f851a819d",
+          "direction": "DEBIT",
+          "money": {
+            "amount": "25.00",
+            "currency": "BRL"
+          },
+          "balanceBefore": {
+            "amount": "1000.00",
+            "currency": "BRL"
+          },
+          "balanceAfter": {
+            "amount": "975.00",
+            "currency": "BRL"
+          },
+          "walletVersion": 2
+        }
+      }
+    },
+    {
+      "name": "pending-reference",
+      "message": {
+        "eventId": "0192f2a0-0000-7000-8000-000000000005",
+        "eventType": "WagerTransactionPendingReference",
+        "aggregateId": "0192f298-0000-7000-8000-000000000005",
+        "correlationId": "msg-300",
+        "occurredAt": "2026-07-29T15:02:00.000Z",
+        "version": 1,
+        "data": {
+          "transactionId": "0192f298-0000-7000-8000-000000000005",
+          "providerId": "provider-a",
+          "externalTransactionId": "transaction-300",
+          "walletId": "0192f291-27dd-7d3f-8071-5f8685deef37",
+          "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+          "roundId": "round-989",
+          "gameId": "fortune-chimp",
+          "kind": "REFUND",
+          "money": {
+            "amount": "10.00",
+            "currency": "BRL"
+          },
+          "referenceExternalTransactionId": "transaction-299",
+          "expiresAt": "2026-07-29T15:17:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "failed-feature-final-attempt",
+      "message": {
+        "eventId": "0192f2a0-0000-7000-8000-000000000003",
+        "eventType": "WagerTransactionFailed",
+        "aggregateId": "0192f298-0000-7000-8000-000000000003",
+        "correlationId": "msg-200",
+        "occurredAt": "2026-07-29T15:01:00.000Z",
+        "version": 1,
+        "data": {
+          "transactionId": "0192f298-0000-7000-8000-000000000003",
+          "providerId": "provider-a",
+          "externalTransactionId": "transaction-200",
+          "walletId": "0192f291-27dd-7d3f-8071-5f8685deef37",
+          "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+          "roundId": "round-988",
+          "gameId": "fortune-chimp",
+          "kind": "BET",
+          "money": {
+            "amount": "80.00",
+            "currency": "BRL"
+          },
+          "failureCode": "PERMANENT_INFRASTRUCTURE_FAILURE",
+          "balance": {
+            "amount": "20.00",
+            "currency": "BRL"
+          },
+          "walletVersion": 3,
+          "failedAt": "2026-07-29T15:01:00.000Z",
+          "diagnosticCode": "SQL_FEATURE_NOT_SUPPORTED",
+          "sqlState": "0A000",
+          "attempts": 3
+        }
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "unknown-event-type",
+      "base": "processed-bet",
+      "patch": {
+        "eventType": "WalletOpened"
+      }
+    },
+    {
+      "name": "version-two",
+      "base": "processed-bet",
+      "patch": {
+        "version": 2
+      }
+    },
+    {
+      "name": "money-instance-shape",
+      "base": "balance-changed",
+      "patch": {
+        "data.money": {
+          "value": "25.00",
+          "currency": "BRL"
+        }
+      }
+    },
+    {
+      "name": "amount-as-number",
+      "base": "balance-changed",
+      "patch": {
+        "data.balanceAfter.amount": 975
+      }
+    },
+    {
+      "name": "negative-balance",
+      "base": "balance-changed",
+      "patch": {
+        "data.balanceAfter.amount": "-1.00"
+      }
+    },
+    {
+      "name": "processed-bet-without-provider",
+      "base": "processed-bet",
+      "patch": {
+        "data.providerId": null
+      }
+    },
+    {
+      "name": "rejected-without-failure-code",
+      "base": "rejected-insufficient-funds",
+      "patch": {
+        "data.failureCode": null
+      }
+    },
+    {
+      "name": "rejected-contract-error-code",
+      "base": "rejected-insufficient-funds",
+      "patch": {
+        "data.failureCode": "INVALID_PAYLOAD"
+      }
+    },
+    {
+      "name": "pending-reference-for-bet",
+      "base": "pending-reference",
+      "patch": {
+        "data.kind": "BET"
+      }
+    },
+    {
+      "name": "wallet-version-zero",
+      "base": "balance-changed",
+      "patch": {
+        "data.walletVersion": 0
+      }
+    },
+    {
+      "name": "data-of-other-event",
+      "base": "balance-changed",
+      "patch": {
+        "eventType": "WagerTransactionProcessed"
+      }
+    },
+    {
+      "name": "unknown-envelope-field",
+      "base": "processed-bet",
+      "patch": {
+        "publishedAt": "2026-07-29T15:00:01.000Z"
+      }
+    },
+    {
+      "name": "failed-unknown-diagnostic",
+      "base": "failed-feature-final-attempt",
+      "patch": {
+        "data.sqlState": "P0001"
+      }
+    },
+    {
+      "name": "failed-zero-attempts",
+      "base": "failed-feature-final-attempt",
+      "patch": {
+        "data.attempts": 0
+      }
+    },
+    {
+      "name": "failed-attempts-over-limit",
+      "base": "failed-feature-final-attempt",
+      "patch": {
+        "data.attempts": 1001
+      }
+    }
+  ]
+}

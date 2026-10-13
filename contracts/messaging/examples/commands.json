@@ -1,0 +1,83 @@
+{
+  "schema": "contracts/messaging/wager-transaction-requested.schema.json",
+  "valid": [
+    {
+      "name": "bet",
+      "message": {
+        "messageId": "msg-123",
+        "type": "WagerTransactionRequested",
+        "occurredAt": "2026-07-29T15:00:00.000Z",
+        "data": {
+          "providerId": "provider-a",
+          "externalTransactionId": "transaction-123",
+          "idempotencyKey": "provider-a:transaction-123",
+          "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+          "walletId": "0192f291-27dd-7d3f-8071-5f8685deef37",
+          "roundId": "round-987",
+          "gameId": "fortune-chimp",
+          "kind": "BET",
+          "money": { "amount": "25.00", "currency": "BRL" }
+        }
+      }
+    },
+    {
+      "name": "loss",
+      "message": {
+        "messageId": "msg-124",
+        "type": "WagerTransactionRequested",
+        "occurredAt": "2026-07-29T15:00:01.000Z",
+        "data": {
+          "providerId": "provider-a",
+          "externalTransactionId": "transaction-124",
+          "idempotencyKey": "provider-a:transaction-124",
+          "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+          "walletId": "0192f291-27dd-7d3f-8071-5f8685deef37",
+          "roundId": "round-987",
+          "gameId": "fortune-chimp",
+          "kind": "LOSS",
+          "money": { "amount": "0.00", "currency": "BRL" }
+        }
+      }
+    },
+    {
+      "name": "rollback-with-reference",
+      "message": {
+        "messageId": "msg-125",
+        "type": "WagerTransactionRequested",
+        "occurredAt": "2026-07-29T15:00:02Z",
+        "data": {
+          "providerId": "provider-a",
+          "externalTransactionId": "transaction-125",
+          "idempotencyKey": "provider-a:transaction-125",
+          "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+          "walletId": "0192f291-27dd-7d3f-8071-5f8685deef37",
+          "roundId": "round-987",
+          "gameId": "fortune-chimp",
+          "kind": "ROLLBACK",
+          "money": { "amount": "25.00", "currency": "BRL" },
+          "referenceExternalTransactionId": "transaction-123"
+        }
+      }
+    }
+  ],
+  "invalid": [
+    { "name": "amount-as-number", "base": "bet", "patch": { "data.money.amount": 25 } },
+    { "name": "amount-three-decimals", "base": "bet", "patch": { "data.money.amount": "25.000" } },
+    { "name": "amount-negative", "base": "bet", "patch": { "data.money.amount": "-25.00" } },
+    { "name": "amount-exponent", "base": "bet", "patch": { "data.money.amount": "2.5e1" } },
+    { "name": "amount-leading-zero", "base": "bet", "patch": { "data.money.amount": "025.00" } },
+    { "name": "amount-out-of-range", "base": "bet", "patch": { "data.money.amount": "1000000000000000000.00" } },
+    { "name": "bet-zero", "base": "bet", "patch": { "data.money.amount": "0.00" } },
+    { "name": "loss-non-zero", "base": "loss", "patch": { "data.money.amount": "1.00" } },
+    { "name": "opening-not-submittable", "base": "bet", "patch": { "data.kind": "OPENING" } },
+    { "name": "bet-with-reference", "base": "bet", "patch": { "data.referenceExternalTransactionId": "transaction-1" } },
+    { "name": "rollback-without-reference", "base": "rollback-with-reference", "patch": { "data.referenceExternalTransactionId": null } },
+    { "name": "unknown-envelope-field", "base": "bet", "patch": { "receiptHandle": "abc" } },
+    { "name": "unknown-data-field", "base": "bet", "patch": { "data.balance": "10.00" } },
+    { "name": "wrong-type", "base": "bet", "patch": { "type": "WagerTransactionProcessed" } },
+    { "name": "missing-idempotency-key", "base": "bet", "patch": { "data.idempotencyKey": null } },
+    { "name": "local-time-without-z", "base": "bet", "patch": { "occurredAt": "2026-07-29T15:00:00-03:00" } },
+    { "name": "uppercase-uuid", "base": "bet", "patch": { "data.walletId": "0192F291-27DD-7D3F-8071-5F8685DEEF37" } },
+    { "name": "message-id-too-long", "base": "bet", "patch": { "messageId": "m-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" } }
+  ]
+}

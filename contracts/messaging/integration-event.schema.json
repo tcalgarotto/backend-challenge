@@ -1,0 +1,513 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jwp.local/contracts/messaging/integration-event.schema.json",
+  "title": "IntegrationEvent envelope (outbox payload, wager-events.fifo)",
+  "description": "Serialized IntegrationEvent.toJSON() from docs/CHALLENGE.md section 11. eventType and version belong to the concrete subclass; data carries MoneyProps, never Money instances. Retries keep eventId, occurredAt and the whole envelope byte-identical.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventId",
+    "eventType",
+    "aggregateId",
+    "correlationId",
+    "occurredAt",
+    "version",
+    "data"
+  ],
+  "properties": {
+    "eventId": {
+      "$ref": "#/$defs/uuid"
+    },
+    "eventType": {
+      "enum": [
+        "WagerTransactionProcessed",
+        "WagerTransactionRejected",
+        "WalletBalanceChanged",
+        "WagerTransactionPendingReference",
+        "WagerTransactionFailed"
+      ]
+    },
+    "aggregateId": {
+      "$ref": "#/$defs/uuid"
+    },
+    "correlationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "causationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "occurredAt": {
+      "$ref": "#/$defs/instant"
+    },
+    "version": {
+      "const": 1
+    },
+    "data": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "eventType": {
+            "const": "WagerTransactionProcessed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/processed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "eventType": {
+            "const": "WagerTransactionRejected"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/rejected"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "eventType": {
+            "const": "WalletBalanceChanged"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/balanceChanged"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "eventType": {
+            "const": "WagerTransactionPendingReference"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/pendingReference"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "eventType": {
+            "const": "WagerTransactionFailed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "#/$defs/failed"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "instant": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+    },
+    "externalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "money": {
+      "description": "MoneyProps. Balances and amounts are non-negative; reconciliation differences never travel in events.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "properties": {
+        "amount": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,17})\\.[0-9]{2}$"
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        }
+      }
+    },
+    "walletVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "processed": {
+      "description": "Every applied transaction, including LOSS and a positive internal OPENING. balance and walletVersion are the values observed under the wallet lock after applying it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transactionId",
+        "walletId",
+        "playerId",
+        "kind",
+        "money",
+        "balance",
+        "walletVersion",
+        "processedAt"
+      ],
+      "properties": {
+        "transactionId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "providerId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "externalTransactionId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "walletId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "playerId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "roundId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "gameId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "kind": {
+          "enum": [
+            "OPENING",
+            "BET",
+            "WIN",
+            "LOSS",
+            "REFUND",
+            "ROLLBACK"
+          ]
+        },
+        "money": {
+          "$ref": "#/$defs/money"
+        },
+        "referenceTransactionId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "balance": {
+          "$ref": "#/$defs/money"
+        },
+        "walletVersion": {
+          "$ref": "#/$defs/walletVersion"
+        },
+        "processedAt": {
+          "$ref": "#/$defs/instant"
+        }
+      },
+      "if": {
+        "properties": {
+          "kind": {
+            "not": {
+              "const": "OPENING"
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "providerId",
+          "externalTransactionId",
+          "roundId",
+          "gameId"
+        ]
+      }
+    },
+    "rejected": {
+      "description": "Business rejection persisted as REJECTED. balance is the snapshot observed under the lock; no ledger entry exists.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transactionId",
+        "providerId",
+        "externalTransactionId",
+        "walletId",
+        "playerId",
+        "roundId",
+        "gameId",
+        "kind",
+        "money",
+        "failureCode",
+        "balance",
+        "walletVersion",
+        "rejectedAt"
+      ],
+      "properties": {
+        "transactionId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "providerId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "externalTransactionId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "walletId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "playerId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "roundId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "gameId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "kind": {
+          "enum": [
+            "BET",
+            "WIN",
+            "LOSS",
+            "REFUND",
+            "ROLLBACK"
+          ]
+        },
+        "money": {
+          "$ref": "#/$defs/money"
+        },
+        "referenceExternalTransactionId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "failureCode": {
+          "description": "REJECTED codes from docs/HTTP.md (422 rows).",
+          "enum": [
+            "INSUFFICIENT_FUNDS",
+            "REVERSAL_INSUFFICIENT_FUNDS",
+            "REFERENCE_CONTEXT_MISMATCH",
+            "REFERENCE_KIND_INVALID",
+            "REFERENCE_NOT_PROCESSED",
+            "REVERSAL_AMOUNT_MISMATCH",
+            "ALREADY_REVERSED",
+            "SELF_REFERENCE",
+            "REFERENCE_EXPIRED",
+            "MONETARY_RANGE_EXCEEDED"
+          ]
+        },
+        "balance": {
+          "$ref": "#/$defs/money"
+        },
+        "walletVersion": {
+          "$ref": "#/$defs/walletVersion"
+        },
+        "rejectedAt": {
+          "$ref": "#/$defs/instant"
+        }
+      }
+    },
+    "balanceChanged": {
+      "description": "Only when the balance changes, including a positive OPENING. Field set from docs/CHALLENGE.md section 11.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "walletId",
+        "transactionId",
+        "direction",
+        "money",
+        "balanceBefore",
+        "balanceAfter",
+        "walletVersion"
+      ],
+      "properties": {
+        "walletId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "transactionId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "direction": {
+          "enum": [
+            "DEBIT",
+            "CREDIT"
+          ]
+        },
+        "money": {
+          "$ref": "#/$defs/money"
+        },
+        "balanceBefore": {
+          "$ref": "#/$defs/money"
+        },
+        "balanceAfter": {
+          "$ref": "#/$defs/money"
+        },
+        "walletVersion": {
+          "$ref": "#/$defs/walletVersion"
+        }
+      }
+    },
+    "pendingReference": {
+      "description": "Emitted once when the transaction enters PENDING_REFERENCE; scheduler retries do not re-emit it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transactionId",
+        "providerId",
+        "externalTransactionId",
+        "walletId",
+        "playerId",
+        "roundId",
+        "gameId",
+        "kind",
+        "money",
+        "referenceExternalTransactionId",
+        "expiresAt"
+      ],
+      "properties": {
+        "transactionId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "providerId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "externalTransactionId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "walletId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "playerId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "roundId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "gameId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "kind": {
+          "enum": [
+            "WIN",
+            "REFUND",
+            "ROLLBACK"
+          ]
+        },
+        "money": {
+          "$ref": "#/$defs/money"
+        },
+        "referenceExternalTransactionId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "expiresAt": {
+          "$ref": "#/$defs/instant"
+        }
+      }
+    },
+    "failed": {
+      "description": "Audit of a known permanent feature failure on the final attempt; no balance or ledger effect.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transactionId",
+        "providerId",
+        "externalTransactionId",
+        "walletId",
+        "playerId",
+        "roundId",
+        "gameId",
+        "kind",
+        "money",
+        "failureCode",
+        "balance",
+        "walletVersion",
+        "failedAt",
+        "diagnosticCode",
+        "sqlState",
+        "attempts"
+      ],
+      "properties": {
+        "transactionId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "providerId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "externalTransactionId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "walletId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "playerId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "roundId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "gameId": {
+          "$ref": "#/$defs/externalId"
+        },
+        "kind": {
+          "enum": [
+            "BET",
+            "WIN",
+            "LOSS",
+            "REFUND",
+            "ROLLBACK"
+          ]
+        },
+        "money": {
+          "$ref": "#/$defs/money"
+        },
+        "failureCode": {
+          "const": "PERMANENT_INFRASTRUCTURE_FAILURE"
+        },
+        "balance": {
+          "$ref": "#/$defs/money"
+        },
+        "walletVersion": {
+          "$ref": "#/$defs/walletVersion"
+        },
+        "failedAt": {
+          "$ref": "#/$defs/instant"
+        },
+        "diagnosticCode": {
+          "const": "SQL_FEATURE_NOT_SUPPORTED"
+        },
+        "sqlState": {
+          "const": "0A000"
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      }
+    }
+  }
+}

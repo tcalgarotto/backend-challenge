@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "projectId": "JWP",
+  "kind": "business-api",
+  "operations": [
+    {
+      "id": "JWP-API-001",
+      "operationId": "WalletOpen",
+      "method": "POST",
+      "path": "/wallets",
+      "status": "implemented",
+      "implementationPath": "src/wallet/http/wallet.module.ts",
+      "idempotencyHeader": null
+    },
+    {
+      "id": "JWP-API-002",
+      "operationId": "WalletGet",
+      "method": "GET",
+      "path": "/wallets/:walletId",
+      "status": "implemented",
+      "implementationPath": "src/wallet/http/wallet.module.ts",
+      "idempotencyHeader": null
+    },
+    {
+      "id": "JWP-API-003",
+      "operationId": "WalletLedgerList",
+      "method": "GET",
+      "path": "/wallets/:walletId/ledger",
+      "status": "implemented",
+      "implementationPath": "src/wallet/http/wallet.module.ts",
+      "idempotencyHeader": null
+    },
+    {
+      "id": "JWP-API-004",
+      "operationId": "TransactionGet",
+      "method": "GET",
+      "path": "/wagering/transactions/:transactionId",
+      "status": "implemented",
+      "implementationPath": "src/wagering/http/wagering.module.ts",
+      "idempotencyHeader": null
+    },
+    {
+      "id": "JWP-API-005",
+      "operationId": "ProviderTransactionGet",
+      "method": "GET",
+      "path": "/providers/:providerId/wagering/transactions/:externalTransactionId",
+      "status": "implemented",
+      "implementationPath": "src/wagering/http/wagering.module.ts",
+      "idempotencyHeader": null
+    },
+    {
+      "id": "JWP-API-006",
+      "operationId": "WagerTransactionSubmit",
+      "method": "POST",
+      "path": "/wagering/transactions",
+      "status": "implemented",
+      "implementationPath": "src/wagering/http/wagering.module.ts",
+      "idempotencyHeader": "Idempotency-Key"
+    },
+    {
+      "id": "JWP-API-007",
+      "operationId": "WalletReconcile",
+      "method": "POST",
+      "path": "/wallets/:walletId/reconciliation",
+      "status": "implemented",
+      "implementationPath": "src/wallet/http/wallet.module.ts",
+      "idempotencyHeader": null
+    },
+    {
+      "id": "JWP-API-008",
+      "operationId": "HealthLive",
+      "method": "GET",
+      "path": "/health/live",
+      "status": "implemented",
+      "implementationPath": "src/observability/http.ts",
+      "idempotencyHeader": null
+    },
+    {
+      "id": "JWP-API-009",
+      "operationId": "HealthReady",
+      "method": "GET",
+      "path": "/health/ready",
+      "status": "implemented",
+      "implementationPath": "src/observability/http.ts",
+      "idempotencyHeader": null
+    },
+    {
+      "id": "JWP-API-010",
+      "operationId": "Metrics",
+      "method": "GET",
+      "path": "/metrics",
+      "status": "implemented",
+      "implementationPath": "src/observability/http.ts",
+      "idempotencyHeader": null
+    }
+  ]
+}
