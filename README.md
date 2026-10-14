@@ -1,8 +1,13 @@
 # Distributed Wagering Processor
 
-Serviço financeiro que processa `BET`, `WIN`, `LOSS`, `REFUND` e `ROLLBACK` de vários provedores de jogos, por HTTP e por SQS FIFO.
-Ele continua correto com mensagens duplicadas, fora de ordem ou simultâneas e com três ou mais instâncias no mesmo banco: dinheiro exato, lock por wallet, idempotência persistente, ledger append-only e eventos publicados só depois do commit.
-O enunciado está em [docs/CHALLENGE.md](docs/CHALLENGE.md); as decisões detalhadas, em [ARCHITECTURE.md](ARCHITECTURE.md).
+Serviço financeiro que processa `BET`, `WIN`, `LOSS`, `REFUND` e `ROLLBACK` de vários provedores de jogos, por HTTP e por SQS FIFO, e continua correto com mensagens duplicadas, fora de ordem ou simultâneas e com três ou mais instâncias no mesmo banco.
+
+## Leia em 10 minutos
+
+- **O que é.** Resposta ao [enunciado](docs/CHALLENGE.md): wallets com dinheiro exato, lock por wallet, idempotência persistente, ledger append-only e eventos publicados só depois do commit (transactional outbox).
+- **Como rodar.** `docker compose up -d --build --wait` sobe tudo ([início rápido](#início-rápido)); `bun run check` e `bun run test:integration` verificam ([verificação](#verificação)); a [demonstração manual](#demonstração-manual) mostra concorrência, idempotência e reversão com `curl`.
+- **Decisões-chave.** `Money` em `bigint` de centavos; `SELECT … FOR UPDATE` por wallet; chave de idempotência persistida com hash e snapshot; inbox e outbox na mesma transação financeira; reversão padrão `per_type`, com `per_reference` opcional via `JWP_REVERSAL_POLICY`. Uma linha por decisão em [Decisões](#decisões-de-arquitetura); motivo, alternativas, código e testes em cada ADR do [ARCHITECTURE.md](ARCHITECTURE.md).
+- **Onde está a evidência.** Resultados medidos, ambiente e exits em [docs/evidence](docs/evidence/README.md); cada requisito do enunciado aponta para o mecanismo e o teste em [Requisitos](#requisitos-do-enunciado--onde-estão).
 
 **Stack:** Bun 1.3.14 · TypeScript 5.9.3 (estrito) · NestJS 11.2.7 · MikroORM 6.6.17 · PostgreSQL 17.6 · SQS FIFO no LocalStack 4.9.2 · Docker Compose. Versões fixadas em `package.json`/`bun.lock`.
 
@@ -10,14 +15,15 @@ O enunciado está em [docs/CHALLENGE.md](docs/CHALLENGE.md); as decisões detalh
 
 1. [Início rápido](#início-rápido)
 2. [Arquitetura visual](#arquitetura-visual)
-3. [Decisões de arquitetura](#decisões-de-arquitetura)
-4. [Verificação](#verificação)
-5. [Demonstração manual](#demonstração-manual)
-6. [Resultados de carga](#resultados-de-carga)
-7. [Requisitos do enunciado → onde estão](#requisitos-do-enunciado--onde-estão)
-8. [Segurança](#segurança)
-9. [Limites e trade-offs](#limites-e-trade-offs)
-10. [Mapa da documentação](#mapa-da-documentação)
+3. [Estrutura do código](#estrutura-do-código)
+4. [Decisões de arquitetura](#decisões-de-arquitetura)
+5. [Verificação](#verificação)
+6. [Demonstração manual](#demonstração-manual)
+7. [Resultados de carga](#resultados-de-carga)
+8. [Requisitos do enunciado → onde estão](#requisitos-do-enunciado--onde-estão)
+9. [Segurança](#segurança)
+10. [Limites e trade-offs](#limites-e-trade-offs)
+11. [Mapa da documentação](#mapa-da-documentação)
 
 ## Início rápido
 
@@ -112,33 +118,47 @@ sequenceDiagram
 
 `seq` é gravado sob o lock da wallet, portanto segue a ordem de commit; só um publisher tem eventos de uma wallet em voo. Entre wallets diferentes, a publicação é paralela.
 
-## Decisões de arquitetura
+## Estrutura do código
 
-Uma linha por decisão. "ADR" é um registro de decisão de arquitetura: cada link abre a seção do [ARCHITECTURE.md](ARCHITECTURE.md) com motivo, alternativas e custos. São 14 ADRs (001–011, 014–016); os números 012 e 013 não existem.
+O enunciado descreve o modelo por componentes (§6, §10–§12), sem impor pastas. Cada componente vive num contexto de `src/`, dividido nas camadas `domain` (regras puras), `application` (casos de uso), `infrastructure` (SQL, transação, lock) e `http` (controllers):
 
-| Decisão | Por quê | Onde no código | Como verificar | ADR |
-|---|---|---|---|---|
-| **Money em `bigint` de centavos**; string decimal na API e nos eventos, `numeric(20,2)` no banco | `number` perde centavos acima de 2^53 e arredonda em silêncio | [`src/shared/domain/money.ts`](src/shared/domain/money.ts#L14), [`src/persistence/financial-orm.ts`](src/persistence/financial-orm.ts) | `tests/unit/money.test.ts`; `financial-schema.test.ts` (`exact ORM string mapping above 2^53…`); matriz M02 | [001](ARCHITECTURE.md#jwp-adr-001--money-exato-com-escala-fixa) |
-| **Lock por wallet** com `LockMode.PESSIMISTIC_WRITE` (`FOR UPDATE`) em transação curta, sem lock global | Serializa só quem disputa o mesmo saldo; wallets diferentes seguem em paralelo; menos retries que optimistic locking | [`sql-process-wager-store.ts:122`](src/wagering/infrastructure/sql-process-wager-store.ts#L122), [`sql-wallet-query-store.ts:63`](src/wallet/infrastructure/sql-wallet-query-store.ts#L63) | matriz M03 (100,00 com dois BETs de 80,00 em 3 instâncias); `multi-process.test.ts` (`100/80/80 on 20 wallets…`) | [002](ARCHITECTURE.md#jwp-adr-002--lock-por-wallet-em-transação-curta) |
-| **Invariantes no schema**: saldo ≥ 0, identidades únicas, ledger encadeado por versão | Vale também para escrita concorrente ou SQL direto que pule a aplicação | [`financial-sql.ts:22`](src/persistence/migrations/financial-sql.ts#L22) (CHECK), [`:51`](src/persistence/migrations/financial-sql.ts#L51) (UNIQUE), [`:80`](src/persistence/migrations/financial-sql.ts#L80) (append em ordem de versão) | `tests/integration/schema/financial-schema.test.ts` | [003](ARCHITECTURE.md#jwp-adr-003--schema-e-barreiras-de-integridade) |
-| **Ledger append-only** | Auditoria exige histórico imutável; reconciliação compara saldo com ledger | trigger `ledger_no_mutation` em [`financial-sql.ts:76`](src/persistence/migrations/financial-sql.ts#L76); role de runtime sem UPDATE/DELETE | matriz M07; `financial-schema.test.ts` (`runtime UPDATE/DELETE/TRUNCATE are denied…`) | [003](ARCHITECTURE.md#jwp-adr-003--schema-e-barreiras-de-integridade) |
-| **Idempotência persistente** por `(provider_id, idempotency_key)`, hash SHA-256 do JSON canônico e snapshot da resposta | Timeout não diz se houve commit; o retry precisa recuperar o resultado, não repetir o efeito | [`process-wager.ts:83`](src/wagering/application/process-wager.ts#L83) (hash), [`sql-process-wager-store.ts:127`](src/wagering/infrastructure/sql-process-wager-store.ts#L127) e [`:129`](src/wagering/infrastructure/sql-process-wager-store.ts#L129) | matriz M04 (50 envios paralelos + 10 cópias SQS → um débito) e M06; M13 (restart) | [004](ARCHITECTURE.md#jwp-adr-004--idempotência-de-negócio-e-replay) |
-| **Política de reversão configurável**: padrão `per_type` (um REFUND e um ROLLBACK por referência, como no enunciado); `JWP_REVERSAL_POLICY=per_reference` aceita uma reversão por referência, de qualquer tipo | O enunciado só proíbe repetir o mesmo tipo. No padrão, REFUND+ROLLBACK da mesma BET devolvem o stake duas vezes (100,00 → BET 25,00 → REFUND → ROLLBACK = 125,00); quem não aceita isso escolhe `per_reference`, sem mudança de código nem migration | decisão em [`wager-transaction.ts:287`](src/wagering/domain/wager-transaction.ts#L287); política e validação no boot em [`reversal-policy.ts`](src/wagering/domain/reversal-policy.ts), chamada em [`main.ts:20`](src/main.ts#L20); barreira no banco em [`Migration202610140010.ts`](src/persistence/migrations/Migration202610140010.ts) | matriz M08 nas duas políticas, com corridas HTTP e SQS; segundo do mesmo tipo → 422 `ALREADY_REVERSED` | [005](ARCHITECTURE.md#jwp-adr-005--referências-estados-e-política-de-reversão) |
-| **Referência fora de ordem** vira `PENDING_REFERENCE`, resolvida pelo scheduler | A ordem entre canais não é garantida; esperar com prazo é melhor que rejeitar na hora | prazo de 15 min em [`process-wager.ts:104`](src/wagering/application/process-wager.ts#L104); backoff em [`pending-reference-scheduler.ts`](src/messaging/pending-reference-scheduler.ts#L54), claim em [`:146`](src/messaging/pending-reference-scheduler.ts#L146) | matriz M10; `multi-process.test.ts` (`REFUND/ROLLBACK delivered before the BET…`) | [005](ARCHITECTURE.md#jwp-adr-005--referências-estados-e-política-de-reversão) |
-| **LOSS exige `"0.00"`** e não aceita referência; vira PROCESSED sem ledger | Registra o resultado da rodada sem inventar movimento de saldo | [`wager-transaction.ts:205`](src/wagering/domain/wager-transaction.ts#L205) | `tests/unit/wager-transaction.test.ts`; matriz M07 (sem ledger para LOSS) | [005](ARCHITECTURE.md#jwp-adr-005--referências-estados-e-política-de-reversão) |
-| **Inbox persistente** por `(consumer_name, message_id)` e ack só após o commit | Redelivery do SQS não pode reaplicar efeito; ack antes do commit perderia trabalho | [`Migration202610120005.ts:13`](src/persistence/migrations/Migration202610120005.ts#L13); [`sql-inbox-process-wager-store.ts`](src/messaging/sql-inbox-process-wager-store.ts#L52); ack em [`sqs-wager-consumer.ts:270`](src/messaging/sqs-wager-consumer.ts#L270) | matriz M11; `recovery.test.ts` (`SIGKILL after the financial commit and before the SQS ack…`) | [006](ARCHITECTURE.md#jwp-adr-006--atomicidade-e-inbox) |
-| **Transactional outbox** com claim `FOR UPDATE SKIP LOCKED`, lease e token | Não existe transação distribuída entre PostgreSQL e SQS; o evento só sai depois do commit e sobrevive a crash | INSERT em [`sql-process-wager-store.ts:187`](src/wagering/infrastructure/sql-process-wager-store.ts#L187); claim em [`sql-outbox-store.ts:100`](src/messaging/outbox/sql-outbox-store.ts#L100); envio em [`sqs-outbox-publisher.ts:57`](src/messaging/outbox/sqs-outbox-publisher.ts#L57) | `outbox-publisher.test.ts` (`two publishers claim disjoint rows…`); matriz M12; `recovery.test.ts` (publisher morto antes/depois do `SendMessage`) | [007](ARCHITECTURE.md#jwp-adr-007--sqs-e-outbox) |
-| **Ordem por wallet** na publicação (`seq` + `MessageGroupId = walletId`) | O consumidor recebe os eventos de uma wallet na ordem de commit | [`Migration202610120007.ts`](src/persistence/migrations/Migration202610120007.ts#L6); [`sqs-outbox-publisher.ts:88`](src/messaging/outbox/sqs-outbox-publisher.ts#L88) | matriz M12; carga: downstream sem duplicados nem faltantes | [007](ARCHITECTURE.md#jwp-adr-007--sqs-e-outbox) |
-| **Retry e DLQ**: visibilidade 3, 6, 12, 24, 48 s; DLQ após 5 recebimentos; heartbeat a cada 10 s | Separa falha transitória (retry), de negócio (ack) e permanente (DLQ) | [`sqs-wager-consumer.ts`](src/messaging/sqs-wager-consumer.ts#L288) | `consumer-resilience.test.ts`; matriz M11 (poison → DLQ) | [007](ARCHITECTURE.md#jwp-adr-007--sqs-e-outbox) |
-| **Readiness exige PostgreSQL e SQS**; liveness não consulta dependências | O balanceador só deve mandar tráfego para quem consegue concluir uma operação | [`src/observability/readiness.ts`](src/observability/readiness.ts#L21) | `tests/integration/observability/readiness.test.ts` | [008](ARCHITECTURE.md#jwp-adr-008--runtime) |
-| **Status HTTP distintos** (400, 409, 422, 202, 503, 500) por classe de situação | O provedor decide retry, consulta ou correção pelo status e pelo `code`, sem ler mensagem | [`src/wagering/http/wagering.module.ts`](src/wagering/http/wagering.module.ts#L20); tabela em [docs/HTTP.md](docs/HTTP.md#erros) | matriz M09 | [009](ARCHITECTURE.md#jwp-adr-009--http-códigos-e-diagnóstico) |
-| **Autenticação como ponto de extensão** (`ProviderIdentityPort` + `ProviderAuthGuard` global) | O enunciado não pontua auth; a porta permite plugar um IdP OIDC sem tocar no domínio | [`provider-identity.ts:11`](src/shared/http/provider-identity.ts#L11); [`app.module.ts:23`](src/app.module.ts#L23) | `tests/unit/provider-identity.test.ts` | [010](ARCHITECTURE.md#jwp-adr-010--autenticação) |
-| **FAILED auditável** para falha permanente conhecida de infraestrutura | Uma falha terminal precisa de registro consultável, sem ser confundida com rejeição financeira | [`src/shared/infrastructure/permanent-wager-failure.ts`](src/shared/infrastructure/permanent-wager-failure.ts) | `tests/integration/wager/permanent-failure.test.ts` | [011](ARCHITECTURE.md#jwp-adr-011--failed-auditável) |
-| **MikroORM para transação e locks; SQL explícito** para claims e escritas críticas | Mantém visíveis e revisáveis os locks, fences e a ordem de escrita | [`sql-process-wager-store.ts:67`](src/wagering/infrastructure/sql-process-wager-store.ts#L67) | `process-wager.test.ts` (`LockMode keeps row locking and fresh SQL state…`) | [014](ARCHITECTURE.md#jwp-adr-014--mikroorm-como-infraestrutura-transacional-e-sql-explícito) |
-| **Migrations em SQL manual** e guarda automática de drift contra as entidades MikroORM | O diff gerado pelo ORM não expressa índices parciais, CHECKs entre colunas, triggers e grants, e proporia apagar tabelas; o teste de drift pega entidade e migration divergentes | [`src/persistence/migrations/`](src/persistence/migrations/Migration202610110002.ts) (002–009) | [`tests/integration/schema/schema-drift.test.ts`](tests/integration/schema/schema-drift.test.ts) (`schema produced by the SQL migrations matches every MikroORM entity…` e controles negativos) | [015](ARCHITECTURE.md#jwp-adr-015--migrations-em-sql-manual-e-guarda-de-drift-contra-as-entidades) |
-| **Multimoeda BRL/USD/EUR com escala 2** e allowlist opcional `JWP_ENABLED_CURRENCIES` validada no boot | O enunciado fixa escala 2 e pede conflitos de moeda testados; moedas de escala 2 não mudam a representação em centavos nem o comportamento de BRL | registro em [`currency.ts:14`](src/shared/domain/currency.ts#L14); allowlist em [`:82`](src/shared/domain/currency.ts#L82), chamada no boot em [`main.ts:18`](src/main.ts#L18); mismatch sob lock em [`sql-process-wager-store.ts:140`](src/wagering/infrastructure/sql-process-wager-store.ts#L140) | `tests/unit/currency.test.ts`; testes de integração de wallet, wager e mensageria com USD, `CURRENCY_MISMATCH` e `UNSUPPORTED_CURRENCY` | [016](ARCHITECTURE.md#jwp-adr-016--multimoeda-com-escala-fixa-e-evolução-para-cripto-e-câmbio) |
+| Componente do enunciado | Contexto em `src/` | Camadas e arquivos principais |
+|---|---|---|
+| `Money`, moedas, identificadores (§6.1) | `shared` | `domain/` (`money.ts`, `currency.ts`), `http/` (`provider-identity.ts`), `infrastructure/` (`sql-transaction.ts`, `permanent-wager-failure.ts`), `events/` |
+| `Wallet`, `WalletLedgerEntry`, consultas e reconciliação (§6.2, §6.4, §9) | `wallet` | `domain/`, `application/`, `infrastructure/`, `http/`, `events/` |
+| `WagerTransaction` e regras de negócio (§6.3, §7) | `wagering` | `domain/` (inclui `reversal-policy.ts`), `application/` (`process-wager.ts`), `infrastructure/`, `http/`, `events/` |
+| Inbox, outbox, consumer SQS e scheduler (§6.5, §10, §11) | `messaging` | `domain/` (`inbox-message.ts`, `outbox-message.ts`), `outbox/` (publisher e store), adapters na raiz (`sqs-wager-consumer.ts`, `pending-reference-scheduler.ts`) |
+| Métricas, logs e health checks (§12) | `observability` | `metrics.ts`, `log.ts`, `readiness.ts` |
+| Schema, migrations e ORM (§4) | `persistence` | `migrations/` (SQL manual), `financial-orm.ts`, `migrate.ts` |
+| Processos HTTP e workers | `runtime` (+ `main.ts`, `config/`) | `workers.ts` |
 
 Domínio (`src/wallet/domain`, `src/wagering/domain`, `src/shared/domain`) não importa NestJS nem ORM. HTTP, consumer e scheduler chamam o mesmo `WagerApplicationService`; os adapters em `infrastructure/` controlam transação, lock e identidade durável.
+
+## Decisões de arquitetura
+
+Uma linha por decisão. "ADR" é um registro de decisão de arquitetura: cada link abre a seção do [ARCHITECTURE.md](ARCHITECTURE.md) com motivo, alternativas, custos, código e como verificar. São 14 ADRs (001–011, 014–016); os números 012 e 013 não existem.
+
+| Decisão | Por quê | ADR |
+|---|---|---|
+| **Money em `bigint` de centavos** | `number` perde centavos acima de 2^53 e arredonda em silêncio | [001](ARCHITECTURE.md#jwp-adr-001--money-exato-com-escala-fixa) |
+| **Lock por wallet** | Serializa só quem disputa o mesmo saldo; wallets diferentes seguem em paralelo; menos retries que optimistic locking | [002](ARCHITECTURE.md#jwp-adr-002--lock-por-wallet-em-transação-curta) |
+| **Invariantes no schema** | Vale também para escrita concorrente ou SQL direto que pule a aplicação | [003](ARCHITECTURE.md#jwp-adr-003--schema-e-barreiras-de-integridade) |
+| **Ledger append-only** | Auditoria exige histórico imutável; reconciliação compara saldo com ledger | [003](ARCHITECTURE.md#jwp-adr-003--schema-e-barreiras-de-integridade) |
+| **Idempotência persistente** | Timeout não diz se houve commit; o retry precisa recuperar o resultado, não repetir o efeito | [004](ARCHITECTURE.md#jwp-adr-004--idempotência-de-negócio-e-replay) |
+| **Política de reversão configurável**: padrão `per_type`; `per_reference` opcional via `JWP_REVERSAL_POLICY` | O enunciado só proíbe repetir o mesmo tipo. No padrão, REFUND seguido de ROLLBACK da mesma BET devolve o valor duas vezes (100,00 → BET 25,00 → REFUND → ROLLBACK = 125,00); `per_reference` aceita uma só reversão por referência, sem mudança de código nem migration | [005](ARCHITECTURE.md#jwp-adr-005--referências-estados-e-política-de-reversão) |
+| **Referência fora de ordem** | A ordem entre canais não é garantida; esperar com prazo é melhor que rejeitar na hora | [005](ARCHITECTURE.md#jwp-adr-005--referências-estados-e-política-de-reversão) |
+| **LOSS exige `"0.00"`** | Registra o resultado da rodada sem inventar movimento de saldo | [005](ARCHITECTURE.md#jwp-adr-005--referências-estados-e-política-de-reversão) |
+| **Inbox persistente** | Redelivery do SQS não pode reaplicar efeito; ack antes do commit perderia trabalho | [006](ARCHITECTURE.md#jwp-adr-006--atomicidade-e-inbox) |
+| **Transactional outbox** | Não existe transação distribuída entre PostgreSQL e SQS; o evento só sai depois do commit e sobrevive a crash | [007](ARCHITECTURE.md#jwp-adr-007--sqs-e-outbox) |
+| **Ordem por wallet** | O consumidor recebe os eventos de uma wallet na ordem de commit | [007](ARCHITECTURE.md#jwp-adr-007--sqs-e-outbox) |
+| **Retry e DLQ** | Separa falha transitória (retry), de negócio (ack) e permanente (DLQ) | [007](ARCHITECTURE.md#jwp-adr-007--sqs-e-outbox) |
+| **Readiness exige PostgreSQL e SQS** | O balanceador só deve mandar tráfego para quem consegue concluir uma operação | [008](ARCHITECTURE.md#jwp-adr-008--runtime) |
+| **Status HTTP distintos** | O provedor decide retry, consulta ou correção pelo status e pelo `code`, sem ler mensagem | [009](ARCHITECTURE.md#jwp-adr-009--http-códigos-e-diagnóstico) |
+| **Autenticação como ponto de extensão** | O enunciado não pontua auth; a porta permite plugar um IdP OIDC sem tocar no domínio | [010](ARCHITECTURE.md#jwp-adr-010--autenticação) |
+| **FAILED auditável** | Uma falha terminal precisa de registro consultável, sem ser confundida com rejeição financeira | [011](ARCHITECTURE.md#jwp-adr-011--failed-auditável) |
+| **MikroORM para transação e locks; SQL explícito** | Mantém visíveis e revisáveis os locks, fences e a ordem de escrita | [014](ARCHITECTURE.md#jwp-adr-014--mikroorm-como-infraestrutura-transacional-e-sql-explícito) |
+| **Migrations em SQL manual** | O diff gerado pelo ORM não expressa índices parciais, CHECKs entre colunas, triggers e grants, e proporia apagar tabelas; o teste de drift pega entidade e migration divergentes | [015](ARCHITECTURE.md#jwp-adr-015--migrations-em-sql-manual-e-guarda-de-drift-contra-as-entidades) |
+| **Multimoeda BRL/USD/EUR com escala 2** | O enunciado fixa escala 2 e pede conflitos de moeda testados; moedas de escala 2 não mudam a representação em centavos nem o comportamento de BRL | [016](ARCHITECTURE.md#jwp-adr-016--multimoeda-com-escala-fixa-e-evolução-para-cripto-e-câmbio) |
 
 ## Verificação
 
@@ -152,26 +172,7 @@ Do mais rápido ao mais completo. Os testes de integração usam PostgreSQL e SQ
 | 4 | `bun run test:compose` | Sobe `compose.yml` do zero com imagem real e 3 réplicas; confere `/health/ready` de cada uma, schema, role de runtime e as 4 filas com redrive; encerra com `down -v` | exit 0; 18/18 verificações |
 | 5 | `bun run test:load` | Carga contra PostgreSQL/SQS reais, com invariantes ao final | exit 0; 17 invariantes verdadeiras, downstream sem duplicados nem faltantes |
 
-Os resultados da execução de referência, o ambiente, o sourceCommit e os exits estão em [docs/evidence/README.md](docs/evidence/README.md). A execução de referência de check e reprodução integral é de 14/10/2026, sobre o código atual com multimoeda e `LockMode`: 83 etapas, 438 testes, 0 falhas e 4251 asserções na reprodução; 133 testes unitários e 2 de smoke no check. A execução anterior, de 13/10/2026, continua publicada na mesma página como histórico (80 etapas, 398 testes e 4022 asserções, antes da multimoeda); o Compose passou 18/18; a carga padrão após LockMode passou 17/17 invariantes. Os JSONs acompanham a entrega.
-
-A matriz (`tests/matrix/delivery/matrix.test.ts`) cobre os cenários da seção 13 do enunciado:
-
-| Cenário do enunciado | Teste |
-|---|---|
-| Mesma aposta 50 vezes em paralelo | M04; `multi-process.test.ts` (`the same BET sent 50 times…`) |
-| Duas apostas de 80,00 sobre 100,00 | M03 |
-| Wallets distintas em paralelo | M05 |
-| ≥ 3 processos simultâneos | M01; `multi-process.test.ts` (`three API instances, three SQS workers…`) |
-| Worker morto depois do commit e antes do ack | `tests/recovery/crash/recovery.test.ts` |
-| Dois publishers sobre a mesma outbox | M12; `outbox-publisher.test.ts` |
-| ROLLBACK/REFUND antes da referência | M10 |
-| Reinício com consistência final | M13; M14 (`wallet.balance == saldo reconstruído pelo ledger` para todas as wallets) |
-
-Na 1ª tentativa da execução de referência, M14 e seu hook de limpeza excederam timeout por uma espera sem prazo no helper que para os processos da matriz. A causa, a correção limitada e as repetições estão em [docs/evidence](docs/evidence/README.md#causa-da-falha-de-m14-na-1ª-tentativa): o dreno dos pipes de cada processo da matriz agora tem prazo de 5 s após o exit (`DRAIN_GRACE_MS` em `tests/matrix/delivery/support.ts`).
-
-A guarda de drift entre migrations SQL e entidades MikroORM ([ADR 015](ARCHITECTURE.md#jwp-adr-015--migrations-em-sql-manual-e-guarda-de-drift-contra-as-entidades)) roda na reprodução integral (`tests/integration/schema/schema-drift.test.ts`) e falha se uma entidade e uma migration divergirem.
-
-Isolamento de execuções simultâneas (sufixos, portas, diretórios de saída): [docs/workers.md](docs/workers.md#reprodução-completa-bun-run-testintegration).
+Resultados, ambiente, sourceCommit, exits e o histórico de 13/10/2026: [docs/evidence](docs/evidence/README.md). A guarda de drift entre migrations e entidades ([ADR 015](ARCHITECTURE.md#jwp-adr-015--migrations-em-sql-manual-e-guarda-de-drift-contra-as-entidades)) roda na reprodução integral. Isolamento de execuções simultâneas (sufixos, portas, diretórios de saída): [docs/workers.md](docs/workers.md#reprodução-completa-bun-run-testintegration).
 
 ## Demonstração manual
 
@@ -209,17 +210,9 @@ tx() { # tx <api> <externalId> <kind> <valor> [referência]; moeda em CUR (padr�
 
 ## Resultados de carga
 
-`bun run test:load` roda contra PostgreSQL e SQS reais, com processos HTTP e de workers separados, e termina conferindo 17 invariantes (saldo = ledger, eventos completos, sem duplicados). É medição de um host de desenvolvimento compartilhado, uma execução por ponto, sem meta de RPS nem SLA. Metodologia, definições e o roteiro para repetir a medição: [docs/LOAD_TEST.md](docs/LOAD_TEST.md).
-
-A última execução publicada é de 13/10/2026 e é **histórica**: antecede a multimoeda, a política de reversão configurável e as métricas de contenção. Os números abaixo descrevem aquele código, não esta versão. Configuração padrão (3 HTTP + 3 workers, 32 VUs, 20 s por cenário):
-
-| Cenário (execução histórica de 13/10/2026) | req/s | p50 / p95 / p99 (ms) | Erros HTTP | Falhas SQL transitórias |
-|---|---:|---|---:|---:|
-| Wallets distribuídas | 718,2 | 34,3 / 93,4 / 235,4 | 0% | 0 |
-| Hot wallet (todas as requisições na mesma wallet) | 229,1 | 136,9 / 231,6 / 282,9 | 0% | 0 |
-| Hot drain (500 BETs de 1,00 sobre 100,00) | 259,9 | 112,4 / 168,1 / 221,3 | 0% | 0 |
-
-Invariantes 17/17 e 42703/42703 eventos entregues, sem duplicados nem faltantes. Resumos em [docs/evidence](docs/evidence/README.md). Em outro host a vazão muda; as invariantes devem se manter. A medição da versão final usa o mesmo comando e o roteiro em [docs/LOAD_TEST.md](docs/LOAD_TEST.md#execução-da-versão-final), com `jwp_lock_conflicts_total` incluído no resultado.
+`bun run test:load` roda contra PostgreSQL e SQS reais, com processos HTTP e de workers separados, e confere 17 invariantes ao final (saldo = ledger, eventos completos, sem duplicados); sem meta de RPS nem SLA. Metodologia e roteiro: [docs/LOAD_TEST.md](docs/LOAD_TEST.md).
+Última execução publicada (13/10/2026, **histórica**: anterior à multimoeda, à política de reversão configurável e às métricas de contenção; 3 HTTP + 3 workers, 32 VUs): 718,2 req/s com wallets distribuídas, 229,1 req/s numa hot wallet e 259,9 req/s no hot drain, 0% de erros HTTP, 17/17 invariantes e 42703/42703 eventos entregues. Tabela completa em [docs/evidence](docs/evidence/README.md#carga-padrão-após-lockmode).
+Em outro host a vazão muda; as invariantes devem se manter. A medição da versão final usa o mesmo comando, com `jwp_lock_conflicts_total` ([roteiro](docs/LOAD_TEST.md#execução-da-versão-final)).
 
 ## Requisitos do enunciado → onde estão
 
@@ -227,7 +220,7 @@ Invariantes 17/17 e 42703/42703 eventos entregues, sem duplicados nem faltantes.
 |---|---|
 | §2 Autenticação | [ADR 010](ARCHITECTURE.md#jwp-adr-010--autenticação): ponto de extensão, sem IdP nesta entrega |
 | §4 Stack e ORM | Stack acima; MikroORM em [ADR 014](ARCHITECTURE.md#jwp-adr-014--mikroorm-como-infraestrutura-transacional-e-sql-explícito); migrations 002–009 em `src/persistence/migrations` |
-| §5 Restrições invioláveis | [Decisões](#decisões-de-arquitetura); mapa falha → mecanismo → teste no fim de [docs/CHALLENGE.md](docs/CHALLENGE.md#mecanismos-e-provas-das-falhas-eliminatórias) |
+| §5 Restrições invioláveis | [Decisões](#decisões-de-arquitetura) e [falhas eliminatórias](#falhas-eliminatórias-mecanismo-e-prova) abaixo |
 | §6 Modelo de domínio | `Money`, `Wallet`, `WagerTransaction`, `WalletLedgerEntry`, `InboxMessage`, `OutboxMessage` em `src/*/domain`; desvios do esqueleto em [ARCHITECTURE.md](ARCHITECTURE.md#desvios-do-esqueleto-do-enunciado) |
 | §7 Regras de negócio e `failureCode` | [ADR 005](ARCHITECTURE.md#jwp-adr-005--referências-estados-e-política-de-reversão); taxonomia em [docs/HTTP.md](docs/HTTP.md#erros) |
 | §8 Concorrência | [ADR 002](ARCHITECTURE.md#jwp-adr-002--lock-por-wallet-em-transação-curta); matriz M03/M05 |
@@ -235,17 +228,44 @@ Invariantes 17/17 e 42703/42703 eventos entregues, sem duplicados nem faltantes.
 | §10 SQS | [ADR 006](ARCHITECTURE.md#jwp-adr-006--atomicidade-e-inbox), [ADR 007](ARCHITECTURE.md#jwp-adr-007--sqs-e-outbox), [docs/workers.md](docs/workers.md) |
 | §11 Outbox e eventos | [ADR 007](ARCHITECTURE.md#jwp-adr-007--sqs-e-outbox); [contratos de mensageria](contracts/messaging/README.md) |
 | §12 Observabilidade | `/metrics` (transações por status, duplicatas, retries, filas e DLQs, espera de lock, outbox pendente e idade, latência), logs JSON com `correlationId`; [ADR 009](ARCHITECTURE.md#jwp-adr-009--http-códigos-e-diagnóstico) |
-| §13 Testes | [Verificação](#verificação) |
+| §13 Testes | [Verificação](#verificação) e [cenários obrigatórios](#cenários-obrigatórios-do-13) abaixo |
 | Diferencial: teste de carga | [Resultados de carga](#resultados-de-carga) |
+
+### Cenários obrigatórios do §13
+
+A matriz (`tests/matrix/delivery/matrix.test.ts`) cobre os cenários da seção 13 do enunciado:
+
+| Cenário do enunciado | Teste |
+|---|---|
+| Mesma aposta 50 vezes em paralelo | M04; `multi-process.test.ts` (`the same BET sent 50 times…`) |
+| Duas apostas de 80,00 sobre 100,00 | M03 |
+| Wallets distintas em paralelo | M05 |
+| ≥ 3 processos simultâneos | M01; `multi-process.test.ts` (`three API instances, three SQS workers…`) |
+| Worker morto depois do commit e antes do ack | `tests/recovery/crash/recovery.test.ts` |
+| Dois publishers sobre a mesma outbox | M12; `outbox-publisher.test.ts` |
+| ROLLBACK/REFUND antes da referência | M10 |
+| Reinício com consistência final | M13; M14 (`wallet.balance == saldo reconstruído pelo ledger` para todas as wallets) |
+
+### Falhas eliminatórias: mecanismo e prova
+
+Cada falha eliminatória do §14 relacionada à barreira da implementação e ao teste que a prova (PostgreSQL e SQS reais):
+
+| Eliminatória | Mecanismo existente | Teste que prova |
+|---|---|---|
+| `number` para dinheiro | [src/shared/domain/money.ts:14](src/shared/domain/money.ts#L14), centavos bigint e entrada/saída string; `src/persistence/financial-orm.ts`, mapeamento decimal exato | `tests/integration/schema/financial-schema.test.ts`: `exact ORM string mapping above 2^53, cent dirty checking and input scale/range rejection` |
+| Saldo negativo por corrida | [src/wagering/infrastructure/sql-process-wager-store.ts:120](src/wagering/infrastructure/sql-process-wager-store.ts#L120), LockMode.PESSIMISTIC_WRITE (FOR UPDATE) por wallet; CHECK do saldo no schema | `tests/concurrency/multi-process/multi-process.test.ts`: `100/80/80 on 20 wallets in parallel: HTTP x HTTP on different instances and HTTP x SQS each debit exactly once` |
+| Débito/crédito duplicado | [src/persistence/migrations/financial-sql.ts:51](src/persistence/migrations/financial-sql.ts#L51) e `:71`, identidades e lançamentos únicos; inbox durável | `tests/matrix/delivery/matrix.test.ts`: `M04 the same BET 50 times in parallel on three instances plus 10 SQS copies debits exactly once` |
+| Idempotência só em memória | [src/wagering/infrastructure/sql-process-wager-store.ts:127](src/wagering/infrastructure/sql-process-wager-store.ts#L127), comparação do hash e snapshot em SQL; lookup persistido em [sql-process-wager-store.ts:125](src/wagering/infrastructure/sql-process-wager-store.ts#L125); UNIQUE por provedor | `tests/matrix/delivery/matrix.test.ts`: `M06 persistent idempotency: replay keeps the original result across instances; conflicts and missing key are distinct`; `M13 restart: all API instances replaced; replays, balances and reconciliation unchanged` |
+| Correto só com uma instância | [src/wagering/infrastructure/sql-process-wager-store.ts:65](src/wagering/infrastructure/sql-process-wager-store.ts#L65), TX SQL compartilhada; locks/fences no banco | `tests/concurrency/multi-process/multi-process.test.ts`: `three API instances, three SQS workers, two publishers and three schedulers run as distinct Bun processes` |
+| Publicar antes do commit | [src/wagering/infrastructure/persist-wager-effects.ts:47](src/wagering/infrastructure/persist-wager-effects.ts#L47), outbox na TX financeira; [src/messaging/outbox/sqs-outbox-publisher.ts:57](src/messaging/outbox/sqs-outbox-publisher.ts#L57), claim confirmado antes do envio | `tests/integration/messaging/outbox/outbox-publisher.test.ts`: `two publishers claim disjoint rows, call real SQS after commit, and never publish into the commands queue` |
+| Ledger não auditável | [src/persistence/migrations/financial-sql.ts:76](src/persistence/migrations/financial-sql.ts#L76), imutabilidade por trigger e privilégios; cadeia before/after e reconciliação | `tests/matrix/delivery/matrix.test.ts`: `M07 auditable append-only ledger: cursor pages, chained balances, no ledger for LOSS/REJECTED, UPDATE/DELETE refused`; `tests/integration/schema/financial-schema.test.ts`: `runtime UPDATE/DELETE/TRUNCATE are denied; owner triggers independently forbid ledger mutation` |
+| Testes que mockam PG/SQS | [tests/concurrency/multi-process/support.ts:14](tests/concurrency/multi-process/support.ts#L14), infraestrutura obrigatória; [tests/integration/sqs/support/sqs.ts:26](tests/integration/sqs/support/sqs.ts#L26), probe SQS real; runner reprova ausência | `tests/concurrency/multi-process/multi-process.test.ts`: `three API instances, three SQS workers, two publishers and three schedulers run as distinct Bun processes`; controles negativos e suítes reais no runner de reprodução |
 
 ## Segurança
 
-- **Método.** Auditoria com um checklist de auditoria de segurança baseado no guia da Cloudflare, sobre `src`, migrations, workers, Dockerfile e Compose. Os testes dinâmicos rodaram num sandbox Docker isolado, sem rede externa.
-- **Resultado.** Nenhum achado confirmado. Concorrência, idempotência, reversão paralela, validação de quantias, injeção, cursor entre carteiras, logs e SQS seguraram nos testes. O registro de cada hipótese está em [FINDINGS.md](docs/security/FINDINGS.md).
-- **Itens de implantação (sem severidade), ambos tratados depois da auditoria.**
-  - *Bind e modo local:* corrigido em código e teste. `HOST` padrão é `127.0.0.1`, inclusive na imagem; o Compose define `HOST=0.0.0.0` dentro do container e publica a porta só em `127.0.0.1`. Com `NODE_ENV=production` e a identidade local, o boot falha com `INSECURE_LOCAL_AUTH_IN_PRODUCTION`, salvo `JWP_ALLOW_INSECURE_LOCAL_AUTH=true` (`tests/unit/deploy-hardening.test.ts`).
-  - *IAM de quem publica na fila de comandos:* política de menor privilégio por componente documentada em [IAM.md](docs/security/IAM.md). Não foi verificada numa conta AWS real.
-- **Escopo.** Vale para a matriz testada. Não houve revisão independente de cobertura, então isso não é uma afirmação de ausência de vulnerabilidades. Detalhes em [docs/security/](docs/security/README.md).
+- **Método e resultado.** Auditoria com checklist baseado no guia da Cloudflare sobre `src`, migrations, workers, Dockerfile e Compose, com testes dinâmicos num sandbox Docker isolado, sem rede externa: nenhum achado confirmado. Cada hipótese está em [FINDINGS.md](docs/security/FINDINGS.md).
+- **Itens de implantação (sem severidade), tratados depois da auditoria.** `HOST` padrão `127.0.0.1`, com o Compose usando `HOST=0.0.0.0` só dentro do container e publicando em `127.0.0.1`; boot recusado com `INSECURE_LOCAL_AUTH_IN_PRODUCTION` (ver [Limites](#limites-e-trade-offs), `tests/unit/deploy-hardening.test.ts`). IAM de menor privilégio por componente em [IAM.md](docs/security/IAM.md), não verificado numa conta AWS real.
+- **Escopo.** Vale para a matriz testada, sem revisão independente de cobertura: não é afirmação de ausência de vulnerabilidades. Detalhes em [docs/security/](docs/security/README.md).
 
 ## Limites e trade-offs
 
@@ -264,7 +284,7 @@ Cada linha: decisão → custo → mitigação ou evolução.
 
 | Documento | Conteúdo |
 |---|---|
-| [docs/CHALLENGE.md](docs/CHALLENGE.md) | Enunciado original e mapa falha → mecanismo → teste |
+| [docs/CHALLENGE.md](docs/CHALLENGE.md) | Enunciado original |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Decisões, alternativas, custos, fluxos detalhados e estados da transação |
 | [docs/HTTP.md](docs/HTTP.md) | Rotas, payloads, status, códigos de erro, `Idempotency-Key` e readiness |
 | [docs/workers.md](docs/workers.md) | Workers, retry/DLQ, SIGTERM e referência operacional (Compose, variáveis, execução local, smoke, reprodução, manifesto do pacote) |

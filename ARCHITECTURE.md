@@ -46,9 +46,17 @@ Estrutura: `src/wallet/{domain,application,http,infrastructure}`, `src/wagering/
 
 **Prova.** `tests/unit/money.test.ts`; colunas `numeric(20,2)` verificadas na matriz de entrega.
 
+**Código e verificação.**
+
+| Decisão | Onde no código | Como verificar |
+|---|---|---|
+| **Money em `bigint` de centavos**; string decimal na API e nos eventos, `numeric(20,2)` no banco | [`src/shared/domain/money.ts`](src/shared/domain/money.ts#L14), [`src/persistence/financial-orm.ts`](src/persistence/financial-orm.ts) | `tests/unit/money.test.ts`; `financial-schema.test.ts` (`exact ORM string mapping above 2^53…`); matriz M02 |
+
 ## JWP-ADR-002 — Lock por wallet em transação curta
 
 **Decisão.** READ COMMITTED com `LockMode.PESSIMISTIC_WRITE` da entidade da wallet dentro de `EntityManager.fork().transactional()`; o MikroORM emite o lock de linha FOR UPDATE. Todas as mutações de uma wallet seguem esse protocolo; wallets diferentes não compartilham lock.
+
+**Escrita compartilhada.** HTTP e SQS, pelo store de apostas, e o scheduler usam [`persistWagerEffects`](src/wagering/infrastructure/persist-wager-effects.ts#L22) para persistir saldo, ledger e outbox na TX que já possui o lock da wallet. Identidade, snapshot e fences de lease permanecem nos adapters; replay retorna antes dessa escrita. O [teste entre canais](tests/integration/messaging/scheduler/single-write-path.test.ts) verifica o lock e a equivalência dos registros nas duas políticas de reversão.
 
 **Motivo.** Previsibilidade no caminho do saldo e menos lógica de repetição do que optimistic locking. `version` começa em 1 e só incrementa quando o saldo muda (LOSS, rejeição, referência pendente e replay não incrementam); serve para auditoria e eventos, não como barreira de concorrência.
 
@@ -59,6 +67,12 @@ Estrutura: `src/wallet/{domain,application,http,infrastructure}`, `src/wagering/
 **Consequências.** Uma wallet muito concorrida tem limite serial: a varredura de carga mediu ~4 ms de seção crítica por transação ([docs/LOAD_TEST.md](docs/LOAD_TEST.md)). Deadlock, serialization failure e lock timeout repetem a unidade inteira com limite e jitter; saldo insuficiente é regra de negócio, não retry.
 
 **Prova.** `tests/matrix/delivery/matrix.test.ts` (cenário da seção 8 em três instâncias), `tests/concurrency/multi-process`.
+
+**Código e verificação.**
+
+| Decisão | Onde no código | Como verificar |
+|---|---|---|
+| **Lock por wallet** com `LockMode.PESSIMISTIC_WRITE` (`FOR UPDATE`) em transação curta, sem lock global | [`sql-process-wager-store.ts:120`](src/wagering/infrastructure/sql-process-wager-store.ts#L120), [`sql-wallet-query-store.ts:63`](src/wallet/infrastructure/sql-wallet-query-store.ts#L63) | matriz M03 (100,00 com dois BETs de 80,00 em 3 instâncias); `multi-process.test.ts` (`100/80/80 on 20 wallets…`) |
 
 ## JWP-ADR-003 — Schema e barreiras de integridade
 
@@ -90,6 +104,13 @@ Estrutura: `src/wallet/{domain,application,http,infrastructure}`, `src/wagering/
 
 **Prova.** `tests/integration/schema` (up/down/up, UPDATE direto no saldo, lançamento incompatível, role pré-provisionada), matriz de entrega no LOGIN de runtime.
 
+**Código e verificação.**
+
+| Decisão | Onde no código | Como verificar |
+|---|---|---|
+| **Invariantes no schema**: saldo ≥ 0, identidades únicas, ledger encadeado por versão | [`financial-sql.ts:22`](src/persistence/migrations/financial-sql.ts#L22) (CHECK), [`:51`](src/persistence/migrations/financial-sql.ts#L51) (UNIQUE), [`:80`](src/persistence/migrations/financial-sql.ts#L80) (append em ordem de versão) | `tests/integration/schema/financial-schema.test.ts` |
+| **Ledger append-only** | trigger `ledger_no_mutation` em [`financial-sql.ts:76`](src/persistence/migrations/financial-sql.ts#L76); role de runtime sem UPDATE/DELETE | matriz M07; `financial-schema.test.ts` (`runtime UPDATE/DELETE/TRUNCATE are denied…`) |
+
 ## JWP-ADR-004 — Idempotência de negócio e replay
 
 **Decisão.** O header `Idempotency-Key` é obrigatório e é a fonte da verdade no HTTP; no SQS a chave vem em `data.idempotencyKey`. A unicidade é por provedor: UNIQUE(provider_id,idempotency_key) e UNIQUE(provider_id,external_transaction_id). Provedores diferentes podem usar a mesma string de chave.
@@ -107,6 +128,12 @@ Estrutura: `src/wallet/{domain,application,http,infrastructure}`, `src/wagering/
 **Inserção concorrente.** Uma violação de unicidade aborta a transação; a operação recomeça em transação nova e lê o vencedor. Nunca se continua numa transação abortada, nem se dá ack SQS sem inbox e resultado confirmados.
 
 **Prova.** `tests/matrix/delivery/matrix.test.ts` (50 envios paralelos, conflito, caixa de UUID), `tests/unit/process-wager.test.ts`.
+
+**Código e verificação.**
+
+| Decisão | Onde no código | Como verificar |
+|---|---|---|
+| **Idempotência persistente** por `(provider_id, idempotency_key)`, hash SHA-256 do JSON canônico e snapshot da resposta | [`process-wager.ts:83`](src/wagering/application/process-wager.ts#L83) (hash), [`sql-process-wager-store.ts:125`](src/wagering/infrastructure/sql-process-wager-store.ts#L125) e [`:127`](src/wagering/infrastructure/sql-process-wager-store.ts#L127) | matriz M04 (50 envios paralelos + 10 cópias SQS → um débito) e M06; M13 (restart) |
 
 ## JWP-ADR-005 — Referências, estados e política de reversão
 
@@ -161,6 +188,14 @@ Estrutura: `src/wallet/{domain,application,http,infrastructure}`, `src/wagering/
 
 **Prova (demais regras).** M10 em `tests/matrix/delivery/matrix.test.ts` (referência fora de ordem via HTTP e SQS) e `tests/integration/messaging/scheduler/audit-regressions.test.ts`.
 
+**Código e verificação.**
+
+| Decisão | Onde no código | Como verificar |
+|---|---|---|
+| **Política de reversão configurável**: padrão `per_type` (um REFUND e um ROLLBACK por referência, como no enunciado); `JWP_REVERSAL_POLICY=per_reference` aceita uma reversão por referência, de qualquer tipo | decisão em [`wager-transaction.ts:287`](src/wagering/domain/wager-transaction.ts#L287); política e validação no boot em [`reversal-policy.ts`](src/wagering/domain/reversal-policy.ts), chamada em [`main.ts:20`](src/main.ts#L20); barreira no banco em [`Migration202610140010.ts`](src/persistence/migrations/Migration202610140010.ts) | matriz M08 nas duas políticas, com corridas HTTP e SQS; segundo do mesmo tipo → 422 `ALREADY_REVERSED` |
+| **Referência fora de ordem** vira `PENDING_REFERENCE`, resolvida pelo scheduler | prazo de 15 min em [`process-wager.ts:104`](src/wagering/application/process-wager.ts#L104); backoff em [`pending-reference-scheduler.ts`](src/messaging/pending-reference-scheduler.ts#L53), claim em [`:145`](src/messaging/pending-reference-scheduler.ts#L145) | matriz M10; `multi-process.test.ts` (`REFUND/ROLLBACK delivered before the BET…`) |
+| **LOSS exige `"0.00"`** e não aceita referência; vira PROCESSED sem ledger | [`wager-transaction.ts:205`](src/wagering/domain/wager-transaction.ts#L205) | `tests/unit/wager-transaction.test.ts`; matriz M07 (sem ledger para LOSS) |
+
 ## JWP-ADR-006 — Atomicidade e inbox
 
 **Decisão.** Uma transação SQL grava aposta, saldo, ledger, snapshot, inbox (entrada SQS) e eventos. Qualquer falha desfaz tudo. Rejeições de negócio são persistidas com evento, não lançadas como exceção que aborte a gravação.
@@ -174,6 +209,12 @@ Estrutura: `src/wallet/{domain,application,http,infrastructure}`, `src/wagering/
 **Falhas.** Retry transitório nunca converte um registro confirmado em FAILED. Corpo inválido sem identidade fica como problema de transporte (DLQ), sem transação financeira fictícia.
 
 **Prova.** `tests/integration/messaging`, `tests/recovery/crash` (SIGKILL após commit e antes do ack).
+
+**Código e verificação.**
+
+| Decisão | Onde no código | Como verificar |
+|---|---|---|
+| **Inbox persistente** por `(consumer_name, message_id)` e ack só após o commit | [`Migration202610120005.ts:13`](src/persistence/migrations/Migration202610120005.ts#L13); [`sql-inbox-process-wager-store.ts`](src/messaging/sql-inbox-process-wager-store.ts#L52); ack em [`sqs-wager-consumer.ts:270`](src/messaging/sqs-wager-consumer.ts#L270) | matriz M11; `recovery.test.ts` (`SIGKILL after the financial commit and before the SQS ack…`) |
 
 ## JWP-ADR-007 — SQS e outbox
 
@@ -201,6 +242,14 @@ Estrutura: `src/wallet/{domain,application,http,infrastructure}`, `src/wagering/
 
 Fontes: [visibilidade SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html), [FIFO](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/FIFO-key-terms.html).
 
+**Código e verificação.**
+
+| Decisão | Onde no código | Como verificar |
+|---|---|---|
+| **Transactional outbox** com claim `FOR UPDATE SKIP LOCKED`, lease e token | INSERT em [`persist-wager-effects.ts:47`](src/wagering/infrastructure/persist-wager-effects.ts#L47); claim em [`sql-outbox-store.ts:100`](src/messaging/outbox/sql-outbox-store.ts#L100); envio em [`sqs-outbox-publisher.ts:57`](src/messaging/outbox/sqs-outbox-publisher.ts#L57) | `outbox-publisher.test.ts` (`two publishers claim disjoint rows…`); matriz M12; `recovery.test.ts` (publisher morto antes/depois do `SendMessage`) |
+| **Ordem por wallet** na publicação (`seq` + `MessageGroupId = walletId`) | [`Migration202610120007.ts`](src/persistence/migrations/Migration202610120007.ts#L6); [`sqs-outbox-publisher.ts:88`](src/messaging/outbox/sqs-outbox-publisher.ts#L88) | matriz M12; carga: downstream sem duplicados nem faltantes |
+| **Retry e DLQ**: visibilidade 3, 6, 12, 24, 48 s; DLQ após 5 recebimentos; heartbeat a cada 10 s | [`sqs-wager-consumer.ts`](src/messaging/sqs-wager-consumer.ts#L288) | `consumer-resilience.test.ts`; matriz M11 (poison → DLQ) |
+
 ## JWP-ADR-008 — Runtime
 
 **Decisão.** Bun 1.3.14, TypeScript 5.9.3 estrito e NestJS 11.2.7, fixados no lockfile. O Nest roda no Bun depois do `tsc`, com DI explícita nos construtores. As migrations rodam com a credencial owner (`JWP_MIGRATION_DATABASE_URL`); o runtime usa um LOGIN membro de `jwp_runtime`. Readiness exige PostgreSQL e SQS em qualquer topologia HTTP; SQS sem filas configuradas produz 503, embora o processo HTTP permaneça vivo. O uso do MikroORM está na ADR-014.
@@ -210,6 +259,12 @@ Fontes: [visibilidade SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/lat
 **Consequências.** O início exige build e schema provisionado; instalar dependências não aplica migrations. Os papéis HTTP/workers precisam ser escolhidos explicitamente e cada processo mantém seu próprio pool.
 
 **Prova.** `tests/smoke/bootstrap.test.ts` (DI e HTTP compilado), `tests/integration/runtime/workers-entrypoint.test.ts` (papéis e drain), `tests/integration/observability/readiness.test.ts` e `tests/integration/schema` (role runtime).
+
+**Código e verificação.**
+
+| Decisão | Onde no código | Como verificar |
+|---|---|---|
+| **Readiness exige PostgreSQL e SQS**; liveness não consulta dependências | [`src/observability/readiness.ts`](src/observability/readiness.ts#L21) | `tests/integration/observability/readiness.test.ts` |
 
 ## JWP-ADR-009 — HTTP, códigos e diagnóstico
 
@@ -227,6 +282,12 @@ Fontes: [visibilidade SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/lat
 
 **Prova.** `tests/integration/query/compiled-runtime.test.ts`, `tests/integration/observability`.
 
+**Código e verificação.**
+
+| Decisão | Onde no código | Como verificar |
+|---|---|---|
+| **Status HTTP distintos** (400, 409, 422, 202, 503, 500) por classe de situação | [`src/wagering/http/wagering.module.ts`](src/wagering/http/wagering.module.ts#L20); tabela em [docs/HTTP.md](docs/HTTP.md#erros) | matriz M09 |
+
 ## JWP-ADR-010 — Autenticação
 
 **Decisão.** Sem IdP nesta entrega, como o enunciado permite. O ponto de extensão é explícito: `src/shared/http/provider-identity.ts` define `ProviderIdentityPort.identify(request)` e `ProviderAuthGuard`, registrado como `APP_GUARD`. Toda rota passa pelo guard, exceto `@PublicRoute()`: `/health/*` (público pelo enunciado) e `/metrics` (a restringir por rede numa implantação real). Uma porta que devolve `undefined` nega a requisição.
@@ -241,6 +302,12 @@ Fontes: [visibilidade SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/lat
 
 **Prova.** `tests/unit/provider-identity.test.ts`, `tests/unit/deploy-hardening.test.ts`.
 
+**Código e verificação.**
+
+| Decisão | Onde no código | Como verificar |
+|---|---|---|
+| **Autenticação como ponto de extensão** (`ProviderIdentityPort` + `ProviderAuthGuard` global) | [`provider-identity.ts:11`](src/shared/http/provider-identity.ts#L11); [`app.module.ts:23`](src/app.module.ts#L23) | `tests/unit/provider-identity.test.ts` |
+
 ## JWP-ADR-011 — FAILED auditável
 
 **Decisão.** Uma falha permanente conhecida de infraestrutura (SQLSTATE `0A000`) na última tentativa produz a transação FAILED, gravada em nova transação depois de revalidar identidade, lock e lease. Snapshot, inbox (SQS) e o evento `WagerTransactionFailed` confirmam juntos; não altera saldo nem gera ledger. O snapshot preserva o saldo observado sob lock. Retry transitório e erro desconhecido não viram FAILED; se a gravação da auditoria falhar, o consumer não dá ack e a mensagem segue o fluxo de retry/DLQ.
@@ -250,6 +317,12 @@ Fontes: [visibilidade SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/lat
 **Consequências.** A auditoria depende de uma nova transação SQL e pode também falhar. Somente a classificação conhecida produz FAILED; falhas não classificadas conservam o caminho de retry/DLQ, e o cliente não pode assumir que toda resposta 500 criou um registro terminal.
 
 **Prova.** `tests/integration/wager/permanent-failure.test.ts`; política em [docs/workers.md](docs/workers.md).
+
+**Código e verificação.**
+
+| Decisão | Onde no código | Como verificar |
+|---|---|---|
+| **FAILED auditável** para falha permanente conhecida de infraestrutura | [`src/shared/infrastructure/permanent-wager-failure.ts`](src/shared/infrastructure/permanent-wager-failure.ts) | `tests/integration/wager/permanent-failure.test.ts` |
 
 ## JWP-ADR-014 — MikroORM como infraestrutura transacional e SQL explícito
 
@@ -264,6 +337,12 @@ Fontes: [visibilidade SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/lat
 **Prova.** `tests/integration/wager/process-wager.test.ts`, teste `LockMode keeps row locking and fresh SQL state without retaining an identity map snapshot`; reprodução completa PG/SQS, concorrência multiprocesso, reconciliação sob lock e scheduler. O comando de reprodução registra a revisão e seus resultados, não certifica mudanças futuras.
 
 Fontes: [transações MikroORM](https://mikro-orm.io/docs/transactions), [locks PostgreSQL](https://www.postgresql.org/docs/current/explicit-locking.html), [constraints PostgreSQL](https://www.postgresql.org/docs/current/ddl-constraints.html), [tipos numeric](https://www.postgresql.org/docs/current/datatype-numeric.html).
+
+**Código e verificação.**
+
+| Decisão | Onde no código | Como verificar |
+|---|---|---|
+| **MikroORM para transação e locks; SQL explícito** para claims e escritas críticas | [`sql-process-wager-store.ts:65`](src/wagering/infrastructure/sql-process-wager-store.ts#L65) | `process-wager.test.ts` (`LockMode keeps row locking and fresh SQL state…`) |
 
 ## JWP-ADR-015 — Migrations em SQL manual e guarda de drift contra as entidades
 
@@ -289,6 +368,12 @@ Uma tabela mapeada por inteiro também falha se o banco tiver uma coluna que a e
 
 **Como verificar.** `JWP_SCHEMA_DATABASE_URL=<owner de banco vazio descartável> bun test tests/integration/schema/schema-drift.test.ts`. O teste também roda em `bun run test:integration` (passo `regression: tests/integration/schema/schema-drift.test.ts` e controle sem infraestrutura). A prova JSON `schema-drift` lista entidades, projeções e divergências encontradas (esperado: nenhuma).
 
+**Código e verificação.**
+
+| Decisão | Onde no código | Como verificar |
+|---|---|---|
+| **Migrations em SQL manual** e guarda automática de drift contra as entidades MikroORM | [`src/persistence/migrations/`](src/persistence/migrations/Migration202610110002.ts) (002–009) | [`tests/integration/schema/schema-drift.test.ts`](tests/integration/schema/schema-drift.test.ts) (`schema produced by the SQL migrations matches every MikroORM entity…` e controles negativos) |
+
 ## JWP-ADR-016 — Multimoeda com escala fixa e evolução para cripto e câmbio
 
 **Decisão.** `src/shared/domain/currency.ts` mantém um registro estático de moedas com escala por moeda: BRL, USD e EUR, todas com escala 2. O módulo e o boot (`configureCurrencies` em `src/main.ts`, antes de abrir o ORM) falham se uma escala for diferente de 2, se um código não for ISO de três letras maiúsculas ou se houver duplicata. `JWP_ENABLED_CURRENCIES` é opcional; ausente ou vazia habilita o registro inteiro, e quando definida precisa ser subconjunto do registro, sem normalizar caixa. `Money` aceita qualquer moeda do registro, o que permite reidratar dados persistidos. Abertura de wallet e comandos de wager aceitam só moedas habilitadas: fora disso, 400 `UNSUPPORTED_CURRENCY`. Moeda habilitada diferente da wallet é detectada sob o lock da wallet e responde 400 `CURRENCY_MISMATCH` sem linhas novas; no SQS a mesma falha é permanente e segue para a DLQ por redrive. Não há migration: a CHECK de `wallets.currency` já aceita as três moedas e as FKs compostas já amarram a moeda da wallet, do wager e do ledger.
@@ -300,6 +385,12 @@ Uma tabela mapeada por inteiro também falha se o banco tiver uma coluna que a e
 **Evolução: câmbio.** Conversão entre moedas não existe. Exigiria cotação versionada, política de arredondamento, dois lançamentos de ledger (débito numa wallet, crédito na outra) na mesma transação e idempotência própria. Fica fora do escopo.
 
 **Consequências.** Nova moeda de escala 2 entra no registro e na CHECK de `wallets.currency` por migration nova, sem editar migrations anteriores. Desabilitar uma moeda pela allowlist bloqueia novas entradas, mas leitura e reconciliação de wallets existentes continuam funcionando.
+
+**Código e verificação.**
+
+| Decisão | Onde no código | Como verificar |
+|---|---|---|
+| **Multimoeda BRL/USD/EUR com escala 2** e allowlist opcional `JWP_ENABLED_CURRENCIES` validada no boot | registro em [`currency.ts:14`](src/shared/domain/currency.ts#L14); allowlist em [`:82`](src/shared/domain/currency.ts#L82), chamada no boot em [`main.ts:18`](src/main.ts#L18); mismatch sob lock em [`sql-process-wager-store.ts:138`](src/wagering/infrastructure/sql-process-wager-store.ts#L138) | `tests/unit/currency.test.ts`; testes de integração de wallet, wager e mensageria com USD, `CURRENCY_MISMATCH` e `UNSUPPORTED_CURRENCY` |
 
 ## Fora do escopo
 
@@ -318,7 +409,7 @@ A matriz sobe processos reais (APIs, workers, publishers e schedulers). `Child.s
 
 ### Retomada dos dependentes de PENDING_REFERENCE
 
-O trigger `jwp_schedule_pending_reference` cria o job na mesma transação da pendência, com primeira tentativa após um segundo. `ApplicationWorkers.start` mantém o loop de `SqlPendingReferenceScheduler.runOnce`, que busca os jobs vencidos; cada tentativa reconsulta a referência por provedor/identidade externa sob lock da wallet. A referência que chegou entre duas tentativas será observada na próxima consulta: não existe notificação imediata ou despertador por evento SQS. O custo é polling e atraso de até o próximo backoff, limitado ao vencimento. Prova: [src/persistence/migrations/Migration202610120005.ts:46](src/persistence/migrations/Migration202610120005.ts#L46), [src/messaging/pending-reference-scheduler.ts:129](src/messaging/pending-reference-scheduler.ts#L129) e `tests/integration/messaging/pending-reference-scheduler.test.ts`, teste `two workers claim once, persist backoff, then a restarted worker resolves the out-of-order reference exactly once`.
+O trigger `jwp_schedule_pending_reference` cria o job na mesma transação da pendência, com primeira tentativa após um segundo. `ApplicationWorkers.start` mantém o loop de `SqlPendingReferenceScheduler.runOnce`, que busca os jobs vencidos; cada tentativa reconsulta a referência por provedor/identidade externa sob lock da wallet. A referência que chegou entre duas tentativas será observada na próxima consulta: não existe notificação imediata ou despertador por evento SQS. O custo é polling e atraso de até o próximo backoff, limitado ao vencimento. Prova: [src/persistence/migrations/Migration202610120005.ts:46](src/persistence/migrations/Migration202610120005.ts#L46), [src/messaging/pending-reference-scheduler.ts:128](src/messaging/pending-reference-scheduler.ts#L128) e `tests/integration/messaging/pending-reference-scheduler.test.ts`, teste `two workers claim once, persist backoff, then a restarted worker resolves the out-of-order reference exactly once`.
 
 ### Configuração de boot e limites do logger
 
@@ -371,7 +462,7 @@ O lock antecede a leitura da identidade e a decisão do saldo, serializando os e
 A ordem de escrita real é wager, wallet/ledger quando há movimento, depois outbox; todos são confirmados juntos.\
 Replay não cria efeito adicional; payload diferente retorna 409, e só depois do commit há resposta de sucesso.
 
-Fontes: [src/wagering/http/wagering.module.ts:20](src/wagering/http/wagering.module.ts#L20), [src/wagering/application/process-wager.ts:49](src/wagering/application/process-wager.ts#L49), [src/wagering/application/process-wager.ts:155](src/wagering/application/process-wager.ts#L155), [src/wagering/infrastructure/sql-process-wager-store.ts:62](src/wagering/infrastructure/sql-process-wager-store.ts#L62), [src/wagering/infrastructure/sql-process-wager-store.ts:119](src/wagering/infrastructure/sql-process-wager-store.ts#L119). O caminho HTTP usa `EntityManager.transactional` diretamente; `runSqlTransaction` é usado pelo adapter de inbox e pela auditoria de falha permanente, não pelo caminho HTTP normal.
+Fontes: [src/wagering/http/wagering.module.ts:20](src/wagering/http/wagering.module.ts#L20), [src/wagering/application/process-wager.ts:49](src/wagering/application/process-wager.ts#L49), [src/wagering/application/process-wager.ts:155](src/wagering/application/process-wager.ts#L155), [src/wagering/infrastructure/sql-process-wager-store.ts:60](src/wagering/infrastructure/sql-process-wager-store.ts#L60), [src/wagering/infrastructure/sql-process-wager-store.ts:117](src/wagering/infrastructure/sql-process-wager-store.ts#L117). O caminho HTTP usa `EntityManager.transactional` diretamente; `runSqlTransaction` é usado pelo adapter de inbox e pela auditoria de falha permanente, não pelo caminho HTTP normal.
 
 ### Publisher da outbox
 
@@ -490,7 +581,7 @@ O backoff parte de 1 s, dobra com jitter e tem teto de 60 s, sem ultrapassar o v
 No limite do TTL, a referência é reconsultada sob lock antes da rejeição; uma referência já aplicável pode vencer essa corrida.\
 REFERENCE_EXPIRED é terminal, não reabre; concorrência entre reversões é revalidada sob o mesmo lock da wallet.
 
-Fontes: [src/persistence/migrations/Migration202610120005.ts:46](src/persistence/migrations/Migration202610120005.ts#L46), [src/messaging/pending-reference-scheduler.ts:129](src/messaging/pending-reference-scheduler.ts#L129), [src/messaging/pending-reference-scheduler.ts:176](src/messaging/pending-reference-scheduler.ts#L176), [src/messaging/pending-reference-scheduler.ts:294](src/messaging/pending-reference-scheduler.ts#L294), [src/wagering/application/process-wager.ts:89](src/wagering/application/process-wager.ts#L89). Referência inválida/terminal pode rejeitar antes do TTL; o desenho mostra o caso de ausência e chegada fora de ordem.
+Fontes: [src/persistence/migrations/Migration202610120005.ts:46](src/persistence/migrations/Migration202610120005.ts#L46), [src/messaging/pending-reference-scheduler.ts:128](src/messaging/pending-reference-scheduler.ts#L128), [src/messaging/pending-reference-scheduler.ts:175](src/messaging/pending-reference-scheduler.ts#L175), [src/messaging/pending-reference-scheduler.ts:293](src/messaging/pending-reference-scheduler.ts#L293), [src/wagering/application/process-wager.ts:89](src/wagering/application/process-wager.ts#L89). Referência inválida/terminal pode rejeitar antes do TTL; o desenho mostra o caso de ausência e chegada fora de ordem.
 
 ### Estados da transação
 
@@ -515,7 +606,7 @@ Reagendamento altera o job, não cria uma nova transição nem repete o evento d
 Estados terminais são imutáveis; replay devolve o snapshot e não reaplica a transição.\
 FAILED exige diagnóstico permanente conhecido e auditoria; indisponibilidade transitória fica em retry.
 
-Fontes: [src/wagering/domain/wager-transaction.ts:304](src/wagering/domain/wager-transaction.ts#L304), [src/wagering/application/process-wager.ts:91](src/wagering/application/process-wager.ts#L91), [src/messaging/pending-reference-scheduler.ts:281](src/messaging/pending-reference-scheduler.ts#L281).
+Fontes: [src/wagering/domain/wager-transaction.ts:304](src/wagering/domain/wager-transaction.ts#L304), [src/wagering/application/process-wager.ts:91](src/wagering/application/process-wager.ts#L91), [src/messaging/pending-reference-scheduler.ts:280](src/messaging/pending-reference-scheduler.ts#L280).
 
 ## Desvios do esqueleto do enunciado
 

@@ -1,16 +1,14 @@
+import { persistWagerEffects } from './persist-wager-effects.js';
 import { appliedReversalKinds } from './sql-reversal-guard.js';
 import { reversalPolicy } from '../domain/reversal-policy.js';
 import { WalletRecord, walletRecordRow } from '../../persistence/financial-orm.js';
 import { isKnownPermanentWagerFailure, permanentWagerDiagnostic } from '../../shared/infrastructure/permanent-wager-failure.js';
 import { runSqlTransaction, sqlTransactionPolicy } from '../../shared/infrastructure/sql-transaction.js';
-import { randomUUID } from 'node:crypto';
 import { IsolationLevel, LockMode } from '@mikro-orm/core';
 import { transactionFailureCause } from '../../persistence/postgres-connection-failure.js';
 import { isTransientInfrastructureFailure } from '../../shared/infrastructure/sql-transaction.js';
 import type { EntityManager, MikroORM } from '@mikro-orm/postgresql';
 import { Money } from '../../shared/domain/money.js';
-import { WalletLedgerEntry } from '../../wallet/domain/wallet-ledger-entry.js';
-import { OutboxMessage } from '../../messaging/domain/outbox-message.js';
 import { Wallet } from '../../wallet/domain/wallet.js';
 import { defaultWalletOpeningSqlPolicy, type WalletOpeningSqlPolicy } from '../../wallet/infrastructure/sql-wallet-opening-store.js';
 import { ProcessWager, ProcessWagerError, type ProcessWagerStore, type ProcessWagerContext, type ProcessWagerResult } from '../application/process-wager.js';
@@ -166,26 +164,8 @@ export class SqlProcessWagerStore implements ProcessWagerStore {
         command.payloadHash,command.roundId,command.gameId,transaction.kind,transaction.status,command.money.toString(),
         command.referenceExternalTransactionId ?? null,transaction.referenceTransactionId ?? null,transaction.failureCode ?? null,
         JSON.stringify(snapshot),transaction.createdAt,transaction.processedAt ?? null]);
-    if (movement) {
-      const entry = WalletLedgerEntry.create({id:randomUUID(),walletId:wallet.id,transactionId:transaction.id,
-        direction:movement.direction,money:movement.money,
-        balanceBefore:movement.balanceBefore,balanceAfter:movement.balanceAfter,createdAt:at});
-      await query(em,'UPDATE wallets SET balance=?,version=?,updated_at=? WHERE id=?',[wallet.balance.toString(),wallet.version,wallet.updatedAt,wallet.id]);
-      await query(em,`INSERT INTO ledger_entries(id,wallet_id,transaction_id,currency,wallet_version,direction,amount,balance_before,balance_after,created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?)`,[entry.id,entry.walletId,entry.transactionId,wallet.currency,wallet.version,entry.direction,
-          entry.money.toString(),entry.balanceBefore.toString(),entry.balanceAfter.toString(),entry.createdAt]);
-    }
-    const events = ProcessWager.events(transaction, wallet, movement,
-      {correlationId:context.correlationId, occurredAt:at}, reference, diagnostic);
-    const rows = events.map(event => {
-      const message=OutboxMessage.enqueue(event);
-      return [event.eventId,wallet.id,transaction.id,wallet.currency,event.eventType,
-        JSON.stringify(message.payload),message.occurredAt,message.nextAttemptAt];
-    });
-    const values = rows.flat();
-    const placeholders = rows.map(() => '(?,?,?,?,?,?::jsonb,?,?)').join(',');
-    await query(em,`INSERT INTO outbox_events(event_id,wallet_id,transaction_id,currency,event_type,envelope,created_at,next_attempt_at)
-      VALUES ${placeholders}`,values);
+    await persistWagerEffects(em, { transaction, wallet, movement, reference, at,
+      correlationId: context.correlationId, diagnostic });
     return {httpStatus:snapshot.httpStatus,body:snapshot.body};
   }
 }

@@ -1,3 +1,4 @@
+import { persistWagerEffects } from '../wagering/infrastructure/persist-wager-effects.js';
 import { appliedReversalKinds } from '../wagering/infrastructure/sql-reversal-guard.js';
 import { reversalPolicy } from '../wagering/domain/reversal-policy.js';
 import { WalletRecord, walletRecordRow, WagerTransactionLockRecord } from '../persistence/financial-orm.js';
@@ -7,8 +8,6 @@ import { IsolationLevel, LockMode } from '@mikro-orm/core';
 import type { EntityManager, MikroORM } from '@mikro-orm/postgresql';
 import { Money } from '../shared/domain/money.js';
 import { sqlQuery } from '../shared/infrastructure/sql-transaction.js';
-import { WalletLedgerEntry } from '../wallet/domain/wallet-ledger-entry.js';
-import { OutboxMessage } from './domain/outbox-message.js';
 import { Wallet, type WalletMovement } from '../wallet/domain/wallet.js';
 import { ProcessWager, type ProcessWagerResult } from '../wagering/application/process-wager.js';
 import type { FailureCode, RejectionCode, WagerFailureDiagnostic } from '../wagering/domain/wager-error.js';
@@ -341,37 +340,6 @@ export class SqlPendingReferenceScheduler {
         transaction.id,
       ],
     );
-    if (movement) {
-      const entry=WalletLedgerEntry.create({id:randomUUID(),walletId:wallet.id,transactionId:transaction.id,
-        direction:movement.direction,money:movement.money,
-        balanceBefore:movement.balanceBefore,balanceAfter:movement.balanceAfter,createdAt:at});
-      await sqlQuery(em, 'UPDATE wallets SET balance=?,version=?,updated_at=? WHERE id=?', [
-        wallet.balance.toString(),
-        wallet.version,
-        wallet.updatedAt,
-        wallet.id,
-      ]);
-      await sqlQuery(
-        em,
-        `INSERT INTO ledger_entries(
-          id,wallet_id,transaction_id,currency,wallet_version,direction,amount,
-          balance_before,balance_after,created_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-        [
-          entry.id,
-          entry.walletId,
-          entry.transactionId,
-          wallet.currency,
-          wallet.version,
-          entry.direction,
-          entry.money.toString(),
-          entry.balanceBefore.toString(),
-          entry.balanceAfter.toString(),
-          entry.createdAt,
-        ],
-      );
-    }
-
     // O primeiro evento da outbox preserva a correlação da aceitação PENDING_REFERENCE.
     const [origin] = await sqlQuery(
       em,
@@ -381,26 +349,6 @@ export class SqlPendingReferenceScheduler {
     );
     const correlationId = typeof origin?.['correlation_id'] === 'string' && origin['correlation_id'].trim()
       ? origin['correlation_id'] : randomUUID();
-    const events = ProcessWager.events(transaction, wallet, movement,
-      {correlationId, occurredAt:at}, reference, diagnostic);
-    for (const event of events) {
-      const message=OutboxMessage.enqueue(event);
-      await sqlQuery(
-        em,
-        `INSERT INTO outbox_events(
-          event_id,wallet_id,transaction_id,currency,event_type,envelope,created_at,next_attempt_at
-        ) VALUES (?,?,?,?,?,?::jsonb,?,?)`,
-        [
-          event.eventId,
-          wallet.id,
-          transaction.id,
-          wallet.currency,
-          event.eventType,
-          JSON.stringify(message.payload),
-          message.occurredAt,
-          message.nextAttemptAt,
-        ],
-      );
-    }
+    await persistWagerEffects(em, { transaction, wallet, movement, reference, at, correlationId, diagnostic });
   }
 }

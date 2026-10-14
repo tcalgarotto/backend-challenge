@@ -60,7 +60,7 @@ Identificada depois desta execução. A correção alterou só o harness de test
   O motivo de o EOF do pipe não ter chegado naquela execução continua desconhecido.
 - **Correção.**
   - `stop()` idempotente: M14 e `afterAll` compartilham a mesma parada.
-  - Dreno limitado a 5 s após o exit. Se o prazo vence, o helper registra a linha de prova `{"proof":"child-drain-timeout",...}` e devolve `drained:false`. Exit code e sinal continuam verificados.
+  - Dreno limitado a 5 s após o exit (`DRAIN_GRACE_MS` em `tests/matrix/delivery/support.ts`). Se o prazo vence, o helper registra a linha de prova `{"proof":"child-drain-timeout",...}` e devolve `drained:false`. Exit code e sinal continuam verificados.
   - `afterAll` com `Promise.allSettled`, para a limpeza sempre rodar.
   - `AbortSignal.timeout` de 20 s nas chamadas HTTP da matriz, acima do budget de 15 s da TX da API.
   - Teste determinístico [child-stop.test.ts](../../tests/matrix/delivery/child-stop.test.ts) com um pipe que nunca chega ao EOF.
