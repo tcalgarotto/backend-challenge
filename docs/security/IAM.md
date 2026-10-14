@@ -2,17 +2,19 @@
 
 A fila de comandos `wager-transactions.fifo` é um **canal interno**: o consumer aplica o mesmo efeito financeiro do HTTP e não passa pelo `ProviderAuthGuard` (ADR-010 de [ARCHITECTURE.md](../../ARCHITECTURE.md)). Por isso, quem pode publicar nela é decidido pela política IAM. Isso é um **requisito de implantação**: o repositório não cria contas nem políticas, e o exemplo abaixo não foi aplicado numa conta AWS real.
 
-Os ARNs usam marcadores (`REGION`, `ACCOUNT_ID`). Cada papel recebe só as ações que o código chama (`src/messaging/`, `src/observability/observability.ts`).
+Os ARNs usam marcadores (`REGION`, `ACCOUNT_ID`). Cada papel recebe só as ações que o código chama (`src/messaging/`, `src/observability/observability.ts`, `src/observability/readiness.ts`). A operação de DLQ não tem código no repositório; suas ações são o mínimo para inspecionar e drenar pelo console ou CLI.
 
 | Principal | Fila | Ações |
 |---|---|---|
 | Produtor de comandos (serviço interno que gera apostas) | `wager-transactions.fifo` | `sqs:SendMessage` |
 | Worker (`APP_ROLES` com `workers`) | `wager-transactions.fifo` | `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:ChangeMessageVisibility`, `sqs:GetQueueAttributes` |
 | Worker, publisher da outbox | `wager-events.fifo` | `sqs:SendMessage` |
-| Consumer de eventos | `wager-events.fifo` | `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:ChangeMessageVisibility`, `sqs:GetQueueAttributes` |
+| Consumer de eventos (`SqsEventConsumer`) | `wager-events.fifo` | `sqs:ReceiveMessage`, `sqs:DeleteMessage` |
 | Readiness/métricas (toda réplica) | filas e DLQs monitoradas | `sqs:GetQueueAttributes` |
-| Operação de DLQ (inspeção e drenagem) | `*-dlq.fifo` | `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:ChangeMessageVisibility`, `sqs:GetQueueAttributes` |
+| Operação de DLQ (inspeção e drenagem) | `*-dlq.fifo` | `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:GetQueueAttributes` |
 | Redrive de DLQ (humano ou job, opcional) | DLQ de origem do move; fila de destino | DLQ: `sqs:StartMessageMoveTask`, `sqs:CancelMessageMoveTask`, `sqs:ListMessageMoveTasks`, `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:GetQueueAttributes`, `sqs:ListDeadLetterSourceQueues`; destino: `sqs:SendMessage` |
+
+O consumer de eventos não altera visibilidade nem lê atributos: falha transitória deixa a mensagem expirar e voltar pela redrive policy. Se uma réplica sem `workers` atender `/health/ready`, ela usa o papel de readiness/métricas, não o do consumer. Só o worker de comandos chama `ChangeMessageVisibility` (heartbeat de visibilidade, retry com atraso e devolução da mensagem) e `GetQueueAttributes` na própria fila (lê `RedrivePolicy`).
 
 Nenhum papel recebe `sqs:SendMessage` nas DLQs: o SQS move a mensagem pela redrive policy. O papel de redrive só envia à fila de destino (a origem ou um destino FIFO explícito), nunca à DLQ, e não pertence à aplicação. Nenhum recebe `sqs:*`, `CreateQueue`, `DeleteQueue`, `PurgeQueue` ou `SetQueueAttributes`.
 
@@ -64,6 +66,22 @@ Nenhum papel recebe `sqs:SendMessage` nas DLQs: o SQS move a mensagem pela redri
 }
 ```
 
+## Consumer de eventos
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ConsumeWagerEvents",
+      "Effect": "Allow",
+      "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage"],
+      "Resource": "arn:aws:sqs:REGION:ACCOUNT_ID:wager-events.fifo"
+    }
+  ]
+}
+```
+
 ## Operação da DLQ
 
 ```json
@@ -73,7 +91,7 @@ Nenhum papel recebe `sqs:SendMessage` nas DLQs: o SQS move a mensagem pela redri
     {
       "Sid": "InspectAndDrainDlq",
       "Effect": "Allow",
-      "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility", "sqs:GetQueueAttributes"],
+      "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"],
       "Resource": [
         "arn:aws:sqs:REGION:ACCOUNT_ID:wager-transactions-dlq.fifo",
         "arn:aws:sqs:REGION:ACCOUNT_ID:wager-events-dlq.fifo"

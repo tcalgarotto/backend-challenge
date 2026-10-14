@@ -1,6 +1,6 @@
 {
   "formatVersion": 2,
-  "sourceCommit": "fa480954510e89b9a493f97adbdeeb3c7c1aac62",
+  "sourceCommit": "99eb83ecdf230199940b79a5c94f0fdd7ee0dbe6",
   "generatorSha256": "b6ccd0e329daed03e203db0c6c7dba7d5f53b40430c1f7a857a679ef631c0fc3",
   "removedCount": 32,
   "rewrittenPaths": [
@@ -52,7 +52,7 @@
     "docs/evidence/load/summary.json": "e2f9cecfbb9414ea133c02afac3fc2a1a0c0957b44bb3797ac3ea1cead60a638",
     "docs/evidence/product-tree.json": "eace927017246f222f1774e50f8c093f133af546304641f65865924273715644",
     "docs/security/FINDINGS.md": "5e086b57bea8bd51aea1c9a5afef7fcabb79e147677d77ad50b661b97b359c1f",
-    "docs/security/IAM.md": "2df50789ac9d4d9f609957c7250d7d3ea8090d2fc1d1141d74c3dcef9166d185",
+    "docs/security/IAM.md": "1bd730e0706e73435f28a36bfc93736b2792ea3666eafe5f82b96eba0eeab9aa",
     "docs/security/README.md": "a62eb9e7c620e672d39fa82a981cbf45cc0f67ea718365732841157f13043bfb",
     "docs/workers.md": "5d03800ced370f8464d8e7bdd1557a466a371ffb8c4601aeb11301d24d9a33d8",
     "infra/postgres/README.md": "fd8baa8fca3f53438716a66fad875e38dce1ddcd3a0a891c84515f633a41572c",
