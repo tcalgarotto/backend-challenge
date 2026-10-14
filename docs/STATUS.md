@@ -45,7 +45,7 @@ Metodologia, resultados e ressalvas em [LOAD_TEST.md](LOAD_TEST.md). Medição l
 
 ## Regras de negócio relevantes
 
-- LOSS exige `"0.00"` BRL e nenhuma referência ([HTTP.md](HTTP.md)).
+- LOSS exige `"0.00"` na moeda da wallet e nenhuma referência ([HTTP.md](HTTP.md)).
 - Reversão única por referência; ROLLBACK de REFUND é permitido, ROLLBACK de ROLLBACK não ([ARCHITECTURE.md](../ARCHITECTURE.md), JWP-ADR-005).
 
 ## Pacote de entrega

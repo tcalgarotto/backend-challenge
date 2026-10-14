@@ -228,6 +228,25 @@ bun run start:workers
 
 Modelo em [`.env.example`](../.env.example) (`cp .env.example .env`; Bun carrega `.env` do diretório de execução e variáveis exportadas têm precedência). O boot usa `loadEnvironment` em `src/config/env.ts`: valida papéis, banco, portas, timeouts e filas antes de abrir recursos. Configuração inválida gera `INVALID_ENVIRONMENT` com todos os campos/códigos encontrados, sem os valores. Defaults e coerção numérica dos valores válidos não mudam. `APP_ROLES=http` ignora o intervalo e as filas exclusivas dos workers; URLs adicionais de readiness (`JWP_SQS_QUEUE_URLS`) continuam validadas. Credenciais AWS seguem a cadeia do SDK.
 
+| Variável | Padrão | Lida em | Validação e uso |
+|---|---|---|---|
+| `PORT` | `3037` | `src/config/env.ts` | Inteiro de 0 a 65535; senão `INVALID_PORT` |
+| `HOST` | `127.0.0.1` | `src/config/env.ts` | Endereço de bind; o mesmo padrão vale na imagem. O Compose define `HOST=0.0.0.0` dentro do container e publica a porta só em `127.0.0.1` |
+| `NODE_ENV` | ausente | `src/shared/http/provider-identity.ts` | Só o valor `production` tem efeito: com a identidade local, o boot falha com `INSECURE_LOCAL_AUTH_IN_PRODUCTION`, salvo opt-in abaixo |
+| `JWP_ALLOW_INSECURE_LOCAL_AUTH` | ausente (equivale a `false`) | `src/shared/http/provider-identity.ts` | Só o valor exato `true` libera o boot em produção sem IdP; uso restrito a ambiente controlado |
+| `APP_ROLES` | `http` (`http,workers` no Compose e em `start:workers`) | `src/config/env.ts` | `http`, `workers` ou `http,workers`, sem repetição; senão `INVALID_APP_ROLES` |
+| `JWP_DATABASE_URL` | obrigatória | `src/config/env.ts` | URL `postgres:`/`postgresql:` do LOGIN de runtime |
+| `JWP_MIGRATION_DATABASE_URL` | obrigatória para `db:migrate` | `src/persistence/migrate.ts` | Credencial owner, usada só pelas migrations; a aplicação não a lê |
+| `JWP_READINESS_TIMEOUT_MS` | `1000` | `src/config/env.ts` | Inteiro de 1 a 30000 |
+| `JWP_SQS_COMMAND_QUEUE_URL`, `JWP_SQS_EVENT_QUEUE_URL` | ausentes | `src/config/env.ts` | Obrigatórias com `workers`; URL `http(s)` terminada em `.fifo`, filas distintas |
+| `JWP_SQS_QUEUE_URLS` | vazia | `src/config/env.ts` | Filas extras (por exemplo DLQs) para readiness e métricas, separadas por vírgula |
+| `JWP_SQS_ENDPOINT` | ausente | `src/config/env.ts` | Endpoint `http(s)` do LocalStack; omitir na AWS |
+| `AWS_REGION` | `us-east-1` | `src/config/env.ts` | Região do cliente SQS; credenciais pela cadeia do SDK |
+| `JWP_WORKER_INTERVAL_MS` | `250` | `src/config/env.ts` | Inteiro de 1 a 60000 (só com `workers`) |
+| `JWP_ENABLED_CURRENCIES` | ausente ou vazia = `BRL,USD,EUR` | `src/shared/domain/currency.ts` (`configureCurrencies`, chamada em `src/main.ts` antes do ORM) | Lista separada por vírgula, subconjunto do registro, sem normalizar caixa e sem repetição. Valor inválido encerra o boot com `INVALID_CURRENCY_CODE`, `UNKNOWN_CURRENCY` ou `DUPLICATE_CURRENCY` (só índice e tamanho do item, nunca o valor). Fora da allowlist, novas wallets e wagers recebem 400 `UNSUPPORTED_CURRENCY` |
+
+`JWP_ENABLED_CURRENCIES` não passa por `loadEnvironment`: é validada logo depois, por `configureCurrencies`, e o erro de boot é `CurrencyConfigError`, não `INVALID_ENVIRONMENT`.
+
 ### Readiness e logs
 
 `/health/live` responde `{"status":"ok"}` sem consultar dependências. `/health/ready` exige PostgreSQL e SQS alcançáveis em qualquer topologia HTTP; sem filas configuradas no modo só-HTTP, SQS aparece como `not_configured` e a resposta é 503 `unavailable`. Health e `/metrics` são públicos.
