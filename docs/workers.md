@@ -82,7 +82,7 @@ inbox, sem segundo efeito.
 usa `APP_ROLES=http` por padrão; `APP_ROLES=workers bun run start` opera somente os
 workers internos. Para três instâncias completas, execute o comando em três
 terminais com `PORT=3037`, `PORT=3038` e `PORT=3039`, compartilhando DB/filas.
-`HOST` padrão é `127.0.0.1`; use `HOST=0.0.0.0` em containers.
+`HOST` padrão é `127.0.0.1`, inclusive na imagem; defina `HOST=0.0.0.0` explicitamente em containers (o Compose já define). Com `NODE_ENV=production`, o boot recusa a identidade local (`INSECURE_LOCAL_AUTH_IN_PRODUCTION`) salvo `JWP_ALLOW_INSECURE_LOCAL_AUTH=true`; veja [docs/security/README.md](security/README.md).
 
 Configuração inválida falha no bootstrap: roles desconhecidas/duplicadas, URLs
 FIFO ausentes/iguais e intervalo fora de 1–60000 ms. `JWP_WORKER_INTERVAL_MS`

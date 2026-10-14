@@ -241,14 +241,16 @@ A varredura é anterior à mudança para `LockMode` de 13/10/2026. O código com
 
 ## Limites e trade-offs
 
-- **Hot wallet é serial.** O lock por linha limita uma wallet muito disputada a ~4 ms por transação; é o preço da decisão sem retries.
-- **Eventos at-least-once.** Um evento pode ser reenviado (crash entre `SendMessage` e `markPublished`); consumidores deduplicam por `eventId`. A ordem é garantida por wallet, não entre wallets.
-- **Frescor da outbox sob carga.** Com ordem estrita por wallet, a outbox de uma wallet quente drena mais devagar: 128–172 s depois de 30 s a 64 VUs. Atraso, não perda.
-- **Reversão mais restritiva que o enunciado.** Após uma REFUND, uma ROLLBACK da mesma BET é rejeitada (`ALREADY_REVERSED`); ROLLBACK de REFUND continua permitido.
-- **Sem autenticação real.** O modo local aceita qualquer chamada e não autentica o `providerId`; uma implantação pública precisa de um adapter de IdP.
-- **Papéis explícitos.** `bun run start` sobe só HTTP; a mensageria precisa de `bun run start:workers` (o Compose já usa os dois papéis).
-- **Moeda.** O modelo suporta escala 2; a API financeira habilita só BRL. Sem conversão cambial.
-- **Medições locais.** A carga usou LocalStack num host compartilhado; não representa AWS nem produção.
+Cada linha: decisão → custo → mitigação ou evolução.
+
+- **Hot wallet serial.** Lock por linha, sem retries → uma wallet muito disputada fica em ~4 ms por transação → wallets distintas seguem em paralelo; para uma conta muito quente, a evolução seria saldo particionado (fora do escopo).
+- **Eventos at-least-once.** Outbox transacional → um evento pode ser reenviado (crash entre `SendMessage` e `markPublished`) e a ordem vale por wallet, não entre wallets → consumidores deduplicam por `eventId`.
+- **Ordem estrita por wallet na outbox.** Sem reordenação → a outbox de uma wallet quente drena 128–172 s depois de 30 s a 64 VUs (atraso, não perda) → `jwp_outbox_oldest_pending_age_seconds` com alerta ([ARCHITECTURE.md](ARCHITECTURE.md#métricas-exigidas-e-séries-disponíveis)); evolução: publisher particionado por wallet.
+- **Reversão mais restritiva que o enunciado.** Após uma REFUND, uma ROLLBACK da mesma BET é rejeitada (`ALREADY_REVERSED`) → um caso que o enunciado aceitaria vira erro → ROLLBACK de REFUND continua permitido, e o código de erro é explícito.
+- **Sem autenticação real.** Modo local com `ProviderAuthGuard` no-op → qualquer chamada é aceita e o `providerId` não é autenticado → bind padrão `127.0.0.1` e boot recusado com `NODE_ENV=production` sem opt-in; uma implantação pública precisa de um adapter de IdP ([docs/security/README.md](docs/security/README.md)).
+- **Papéis explícitos.** `bun run start` sobe só HTTP → a mensageria precisa de `bun run start:workers` → o Compose já usa os dois papéis.
+- **Moeda.** BRL, USD e EUR com escala 2, uma wallet por player e moeda, allowlist `JWP_ENABLED_CURRENCIES` validada no boot → sem conversão cambial e sem escala diferente de 2 → moeda divergente da wallet é `CURRENCY_MISMATCH` e desconhecida é `UNSUPPORTED_CURRENCY`; cripto e câmbio são evolução ([JWP-ADR-016](ARCHITECTURE.md#jwp-adr-016--multimoeda-com-escala-fixa-e-evolução-para-cripto-e-câmbio)).
+- **Medições locais.** Carga com LocalStack num host compartilhado → os números não representam AWS nem produção → repetir a carga no ambiente alvo antes de dimensionar.
 
 ## Mapa da documentação
 

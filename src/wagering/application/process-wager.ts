@@ -1,6 +1,7 @@
 import { LedgerDirection } from '../../wallet/domain/wallet-ledger-entry.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { Money, type MoneyProps } from '../../shared/domain/money.js';
+import { isEnabledCurrency } from '../../shared/domain/currency.js';
 import { isExactUuid, isOpaqueIdentifier } from '../../shared/domain/identifiers.js';
 import { WagerTransaction, WagerTransactionKind, type CreateWagerTransactionProps, WagerTransactionStatus } from '../domain/wager-transaction.js';
 import { DomainError } from '../../shared/domain/domain-error.js';
@@ -10,7 +11,7 @@ import type { IntegrationEvent } from '../../shared/events/integration-event.js'
 import { WagerTransactionProcessed, WagerTransactionRejected, WagerTransactionPendingReference, WagerTransactionFailed } from '../events/wager-events.js';
 import type { FailureCode, WagerFailureDiagnostic } from '../domain/wager-error.js';
 
-export type ProcessErrorCode = 'INVALID_PAYLOAD' | 'IDEMPOTENCY_KEY_REQUIRED' | 'REFERENCE_REQUIRED'
+export type ProcessErrorCode = 'INVALID_PAYLOAD' | 'UNSUPPORTED_CURRENCY' | 'IDEMPOTENCY_KEY_REQUIRED' | 'REFERENCE_REQUIRED'
   | 'WALLET_NOT_FOUND' | 'PLAYER_MISMATCH' | 'CURRENCY_MISMATCH'
   | 'IDEMPOTENCY_CONFLICT' | 'EXTERNAL_IDENTITY_CONFLICT' | 'INFRASTRUCTURE_UNAVAILABLE';
 export class ProcessWagerError extends Error {
@@ -51,7 +52,7 @@ export function parseWager(input: unknown, idempotencyKey: unknown): CreateWager
       !['providerId','externalTransactionId','roundId','gameId'].every(key => text(input[key])) ||
       !exactUuid(input['playerId']) || !exactUuid(input['walletId']) ||
       !record(input['money']) || Object.keys(input['money']).length !== 2 ||
-      typeof input['money']['amount'] !== 'string' || input['money']['currency'] !== 'BRL' ||
+      typeof input['money']['amount'] !== 'string' || typeof input['money']['currency'] !== 'string' ||
       (Object.hasOwn(input,'referenceExternalTransactionId') && !text(input['referenceExternalTransactionId']))) {
     throw new ProcessWagerError('INVALID_PAYLOAD', 400);
   }
@@ -63,8 +64,11 @@ export function parseWager(input: unknown, idempotencyKey: unknown): CreateWager
     throw new ProcessWagerError('INVALID_PAYLOAD',400);
   if ([WagerTransactionKind.Refund,WagerTransactionKind.Rollback].includes(kind) && !Object.hasOwn(input,'referenceExternalTransactionId'))
     throw new ProcessWagerError('REFERENCE_REQUIRED',400);
+  // Moeda habilitada mas diferente da wallet só é detectada sob lock, como CURRENCY_MISMATCH sem gravação.
+  const currency = input['money']['currency'];
+  if (!isEnabledCurrency(currency)) throw new ProcessWagerError('UNSUPPORTED_CURRENCY',400);
   let money: Money;
-  try { money = Money.from({amount:input['money']['amount'],currency:'BRL'}); }
+  try { money = Money.from({amount:input['money']['amount'],currency}); }
   catch { throw new ProcessWagerError('INVALID_PAYLOAD',400); }
   // Normalizar UUIDs antes do hash permite replay quando só muda a caixa;
   // IDs de provedor, transação externa, round e game continuam opacos e sensíveis à caixa.

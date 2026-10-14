@@ -6,6 +6,7 @@ COPY tsconfig.json tsconfig.build.json ./
 COPY contracts ./contracts
 COPY src ./src
 RUN bun run build
-ENV HOST=0.0.0.0 PORT=3037 APP_ROLES=http,workers
+# HOST fica no padrão 127.0.0.1; quem publica a porta (Compose, orquestrador) define HOST=0.0.0.0 explicitamente.
+ENV PORT=3037 APP_ROLES=http,workers
 EXPOSE 3037
 CMD ["bun", "dist/main.js"]

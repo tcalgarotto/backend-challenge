@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { canonicalJson, parseWager, ProcessWager } from '../../src/wagering/application/process-wager.js';
+import { configureCurrencies } from '../../src/shared/domain/currency.js';
 const body = () => ({providerId:'p',externalTransactionId:'x',playerId:randomUUID(),walletId:randomUUID(),
   roundId:'r',gameId:'g',kind:'BET',money:{amount:'1.00',currency:'BRL'}});
 test('canonical hash sorts nested keys and excludes key/transport metadata',()=>{
@@ -27,7 +28,7 @@ test('strict input rejects missing header, body key fallback and malformed DTOs'
   const invalid:unknown[]=[null,[],{}, {...input,idempotencyKey:'body-key'}, {...input,kind:'OPENING'},
     {...input,referenceExternalTransactionId:null},{...input,referenceExternalTransactionId:'x'},
     {...input,playerId:'player'}, {...input,playerId:input.playerId+'\n'}, {...input,walletId:input.walletId+'\n'},
-    {...input,money:{amount:'1.00',currency:'USD'}},
+    {...input,money:{amount:'1.00',currency:1}},{...input,money:{amount:'1.00',currency:null}},
     {...input,money:{amount:'1.00',currency:'BRL',extra:1}},
     ...[1,'1.0','01.00','1.001','1e2','-1.00','NaN','Infinity','0.00','1000000000000000000.00'].map(amount=>({...input,money:{amount,currency:'BRL'}})),
     {...input,kind:'LOSS',money:{amount:'1.00',currency:'BRL'}}];
@@ -61,4 +62,19 @@ test('idempotency keys preserve opaque bytes and reject invalid shape before per
   expect(parseWager(body(),'a'.repeat(128)).idempotencyKey).toHaveLength(128);
   for(const key of ['a'.repeat(129),'\u0000','\uD800','   '])
     expect(()=>parseWager(body(),key)).toThrow('IDEMPOTENCY_KEY_REQUIRED');
+});
+
+test('moedas habilitadas passam; desconhecidas, minúsculas e fora da allowlist recebem UNSUPPORTED_CURRENCY',()=>{
+  const input=body();
+  for(const currency of ['BRL','USD','EUR']) expect(parseWager({...input,money:{amount:'1.00',currency}},'k').money.currency).toBe(currency);
+  expect(parseWager({...input,money:{amount:'1.00',currency:'USD'}},'k').payloadHash)
+    .not.toBe(parseWager(input,'k').payloadHash);
+  for(const currency of ['brl','usd','XYZ','BTC','BR L',' BRL','BRL ','']) expect(()=>parseWager({...input,money:{amount:'1.00',currency}},'k')).toThrow('UNSUPPORTED_CURRENCY');
+  // Formato do valor continua INVALID_PAYLOAD em moeda válida.
+  expect(()=>parseWager({...input,money:{amount:'1.001',currency:'USD'}},'k')).toThrow('INVALID_PAYLOAD');
+  try {
+    configureCurrencies({JWP_ENABLED_CURRENCIES:'BRL'});
+    expect(()=>parseWager({...input,money:{amount:'1.00',currency:'USD'}},'k')).toThrow('UNSUPPORTED_CURRENCY');
+    expect(parseWager(input,'k').money.currency).toBe('BRL');
+  } finally { configureCurrencies({}); }
 });

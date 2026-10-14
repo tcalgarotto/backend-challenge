@@ -29,7 +29,7 @@
     },
     "externalId": { "type": "string", "minLength": 1, "maxLength": 128 },
     "money": {
-      "description": "MoneyProps: exact decimal string, scale 2, non-negative on input, max 999999999999999999.99.",
+      "description": "MoneyProps: exact decimal string, scale 2, non-negative on input, max 999999999999999999.99. currency must be enabled (BRL, USD or EUR by default, restricted by JWP_ENABLED_CURRENCIES) and equal to the wallet currency; otherwise the command fails permanently with UNSUPPORTED_CURRENCY or CURRENCY_MISMATCH.",
       "type": "object",
       "additionalProperties": false,
       "required": ["amount", "currency"],

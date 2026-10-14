@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { openFinancialOrm } from '../../../src/persistence/financial-orm.js';
 import { OpenWallet, WalletOpeningError } from '../../../src/wallet/application/open-wallet.js';
+import { configureCurrencies } from '../../../src/shared/domain/currency.js';
 import { openingProvider, SqlWalletOpeningStore } from '../../../src/wallet/infrastructure/sql-wallet-opening-store.js';
 
 let orm: Awaited<ReturnType<typeof openFinancialOrm>>;
@@ -97,11 +98,40 @@ test('invalid DTO, currency, money and correlation inputs write nothing',async (
   const before = await counts();
   const valid = input();
   const invalid: unknown[] = [null, [], {}, { ...valid, playerId:'not-a-uuid' }, { ...valid, unexpected:true },
-    { ...valid, initialBalance:null }, { ...valid, initialBalance:{ ...valid.initialBalance, currency:'USD' } },
+    { ...valid, initialBalance:null }, { ...valid, initialBalance:{ ...valid.initialBalance, currency:1 } },
     ...[100,-1,'-1.00','1.001','1e2',' 1.00','01.00','NaN','Infinity','1000000000000000000.00'].map(amount=>({ ...valid,initialBalance:{amount,currency:'BRL'} })),
     { ...valid, initialBalance:{amount:'1.00',currency:'BRL',extra:true} }];
   for (const request of invalid) await expect(open.execute(request)).rejects.toBeInstanceOf(WalletOpeningError);
   await expect(open.execute(valid,'')).rejects.toMatchObject({code:'INVALID_PAYLOAD'});
+  expect(await counts()).toEqual(before);
+});
+
+test('USD e EUR abrem wallet; mesmo player tem uma wallet por moeda',async () => {
+  const playerId = randomUUID();
+  const brl = await open.execute(input('10.00', playerId));
+  const usd = await open.execute({ playerId, initialBalance: { amount: '20.00', currency: 'USD' } });
+  const eur = await open.execute({ playerId, initialBalance: { amount: '0.00', currency: 'EUR' } });
+  expect([brl.balance, usd.balance, eur.balance]).toEqual([
+    { amount: '10.00', currency: 'BRL' }, { amount: '20.00', currency: 'USD' }, { amount: '0.00', currency: 'EUR' }]);
+  expect(new Set([brl.id, usd.id, eur.id]).size).toBe(3);
+  expect(await q(`SELECT w.currency, w.balance::text balance, l.currency ledger_currency, l.amount::text ledger_amount
+    FROM wallets w LEFT JOIN ledger_entries l ON l.wallet_id=w.id WHERE w.player_id=? ORDER BY w.currency`, [playerId])).toEqual([
+    { currency: 'BRL', balance: '10.00', ledger_currency: 'BRL', ledger_amount: '10.00' },
+    { currency: 'EUR', balance: '0.00', ledger_currency: null, ledger_amount: null },
+    { currency: 'USD', balance: '20.00', ledger_currency: 'USD', ledger_amount: '20.00' }]);
+  const before = await counts();
+  await expect(open.execute({ playerId, initialBalance: { amount: '1.00', currency: 'USD' } })).rejects.toMatchObject({ code: 'WALLET_ALREADY_EXISTS' });
+  expect(await counts()).toEqual(before);
+});
+
+test('moeda desconhecida, minúscula ou fora da allowlist recebe UNSUPPORTED_CURRENCY sem gravar',async () => {
+  const before = await counts();
+  for (const currency of ['brl', 'usd', 'XYZ', 'BTC', 'BR L', ' BRL', ''])
+    await expect(open.execute({ playerId: randomUUID(), initialBalance: { amount: '1.00', currency } })).rejects.toMatchObject({ code: 'UNSUPPORTED_CURRENCY' });
+  try {
+    configureCurrencies({ JWP_ENABLED_CURRENCIES: 'BRL' });
+    await expect(open.execute({ playerId: randomUUID(), initialBalance: { amount: '1.00', currency: 'USD' } })).rejects.toMatchObject({ code: 'UNSUPPORTED_CURRENCY' });
+  } finally { configureCurrencies({}); }
   expect(await counts()).toEqual(before);
 });
 

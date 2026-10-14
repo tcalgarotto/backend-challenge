@@ -40,7 +40,7 @@ Estrutura: `src/wallet/{domain,application,http,infrastructure}`, `src/wagering/
 
 **Motivo.** Débitos, créditos e reconciliação precisam preservar centavos exatamente, inclusive acima da faixa inteira segura de `number`.
 
-**Faixa.** Até `999999999999999999.99` em módulo (20 dígitos em centavos, acima de um inteiro SQL de 64 bits). O modelo aceita BRL, USD e EUR com escala 2; a API financeira habilita BRL e operações entre moedas diferentes falham, inclusive comparações.
+**Faixa.** Até `999999999999999999.99` em módulo (20 dígitos em centavos, acima de um inteiro SQL de 64 bits). O registro de moedas aceita BRL, USD e EUR com escala 2 e a API financeira habilita as três, restringíveis por `JWP_ENABLED_CURRENCIES`; operações entre moedas diferentes falham, inclusive comparações ([JWP-ADR-016](#jwp-adr-016--multimoeda-com-escala-fixa-e-evolução-para-cripto-e-câmbio)).
 
 **Consequências.** `bigint` dispensa biblioteca Decimal porque o domínio só soma e subtrai. Não há conversão cambial, divisão, juros ou arredondamento silencioso; se o domínio passar a exigir percentuais, a política de precisão precisa ser revista. A reconciliação soma em `numeric` ou em acumulador `bigint`, sem limitar subtotais à faixa de um saldo: o volume histórico pode exceder a faixa embora o saldo final seja válido.
 
@@ -229,11 +229,11 @@ Fontes: [visibilidade SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/lat
 
 **Consequências.** O modo local não oferece autenticação nem isolamento de autorização entre provedores; uma implantação pública precisa implementar o adapter e as políticas de leitura antes de expor a API.
 
-**Modo local.** `LocalProviderIdentity` aceita qualquer chamada e não autentica o `providerId`, que continua sujeito às validações de domínio. Consumers SQS não passam pelo guard (canal interno confiável).
+**Modo local.** `LocalProviderIdentity` aceita qualquer chamada e não autentica o `providerId`, que continua sujeito às validações de domínio. Consumers SQS não passam pelo guard (canal interno confiável); quem publica na fila de comandos é limitado por IAM, com a política mínima em [docs/security/IAM.md](docs/security/IAM.md). Com `NODE_ENV=production`, `src/main.ts` recusa o boot com a identidade local (`INSECURE_LOCAL_AUTH_IN_PRODUCTION`), salvo `JWP_ALLOW_INSECURE_LOCAL_AUTH=true`. `HOST` padrão é `127.0.0.1`, inclusive na imagem; o Compose define `HOST=0.0.0.0` explicitamente.
 
 **Desenho com IdP.** Um adapter OIDC (Keycloak ou equivalente) valida assinatura, issuer, audience e expiração do token, extrai o provedor autorizado e o cruza com o `providerId` do comando; leitura de wallets passa por política de autorização; sem tabela própria de senhas. Para integrar: implementar a porta e injetá-la em `AppModule.register(..., identity)`.
 
-**Prova.** `tests/unit/provider-identity.test.ts`.
+**Prova.** `tests/unit/provider-identity.test.ts`, `tests/unit/deploy-hardening.test.ts`.
 
 ## JWP-ADR-011 — FAILED auditável
 
@@ -282,6 +282,18 @@ Uma tabela mapeada por inteiro também falha se o banco tiver uma coluna que a e
 **Custo de manutenção.** Mudar uma entidade sem migration, ou uma migration sem ajustar a entidade, falha na reprodução em vez de aparecer só em runtime. A revisão manual fica restrita ao que o ORM não modela (CHECKs, triggers, índices parciais), coberto por `financial-schema.test.ts` e `messaging-migrations.test.ts`.
 
 **Como verificar.** `JWP_SCHEMA_DATABASE_URL=<owner de banco vazio descartável> bun test tests/integration/schema/schema-drift.test.ts`. O teste também roda em `bun run test:integration` (passo `regression: tests/integration/schema/schema-drift.test.ts` e controle sem infraestrutura). A prova JSON `schema-drift` lista entidades, projeções e divergências encontradas (esperado: nenhuma).
+
+## JWP-ADR-016 — Multimoeda com escala fixa e evolução para cripto e câmbio
+
+**Decisão.** `src/shared/domain/currency.ts` mantém um registro estático de moedas com escala por moeda: BRL, USD e EUR, todas com escala 2. O módulo e o boot (`configureCurrencies` em `src/main.ts`, antes de abrir o ORM) falham se uma escala for diferente de 2, se um código não for ISO de três letras maiúsculas ou se houver duplicata. `JWP_ENABLED_CURRENCIES` é opcional; ausente ou vazia habilita o registro inteiro, e quando definida precisa ser subconjunto do registro, sem normalizar caixa. `Money` aceita qualquer moeda do registro, o que permite reidratar dados persistidos. Abertura de wallet e comandos de wager aceitam só moedas habilitadas: fora disso, 400 `UNSUPPORTED_CURRENCY`. Moeda habilitada diferente da wallet é detectada sob o lock da wallet e responde 400 `CURRENCY_MISMATCH` sem linhas novas; no SQS a mesma falha é permanente e segue para a DLQ por redrive. Não há migration: a CHECK de `wallets.currency` já aceita as três moedas e as FKs compostas já amarram a moeda da wallet, do wager e do ledger.
+
+**Motivo.** O enunciado (`docs/CHALLENGE.md` §6.1) fixa "escala fixa de **2** casas" e pede que o modelo continue multimoeda com conflitos de moeda testados. Habilitar moedas de escala 2 não muda a representação (`bigint` de centavos, `numeric(20,2)`) nem o comportamento financeiro de BRL.
+
+**Evolução: cripto.** Moedas com 8 ou 18 casas não cabem hoje. Exigiriam: migration nova que alargue `wallets.balance`, `wager_transactions.amount` e `ledger_entries.amount/balance_before/balance_after` (por exemplo `numeric(38,18)` ou `numeric` com CHECK de escala por moeda via tabela `currencies(code, scale)`), com reescrita de tabela, triggers e FKs revalidadas; `Money` com unidades mínimas genéricas e regex/faixa por moeda; `FinancialDecimalType` e o guard de drift sem a premissa de duas casas; contrato e API com escala por moeda; e um desvio documentado da escala fixa 2 do enunciado. O registro já carrega `scale` para essa transição, mas recusa no boot qualquer valor diferente de 2 até lá.
+
+**Evolução: câmbio.** Conversão entre moedas não existe. Exigiria cotação versionada, política de arredondamento, dois lançamentos de ledger (débito numa wallet, crédito na outra) na mesma transação e idempotência própria. Fica fora do escopo.
+
+**Consequências.** Nova moeda de escala 2 entra no registro e na CHECK de `wallets.currency` por migration nova, sem editar migrations anteriores. Desabilitar uma moeda pela allowlist bloqueia novas entradas, mas leitura e reconciliação de wallets existentes continuam funcionando.
 
 ## Fora do escopo
 
@@ -527,5 +539,7 @@ Wallet possui currency readonly, createdAt e updatedAt defensivos. A migration 0
 | Conflitos/espera de lock | jwp_sql_transient_failures_total; jwp_postgres_lock_waiters |
 | Outbox lag | jwp_outbox_oldest_pending_age_seconds |
 | Latência de processamento | jwp_wager_processing_duration_seconds |
+
+**Frescor da outbox.** `jwp_outbox_oldest_pending_age_seconds` é a idade do evento não publicado mais antigo (0 com a outbox vazia), amostrada no scrape de `/metrics`; um evento travado faz a série crescer (`tests/integration/observability/readiness.test.ts`). Alerta sugerido: acima de 60 s por 5 min (aviso) e acima de 300 s (crítico). O nível crítico fica acima do pior atraso medido sob carga extrema (128–172 s após 30 s a 64 VUs), para não disparar em rajadas que drenam sozinhas; o aviso pega um evento travado bem antes. Evolução: particionar o publisher por wallet (lease por partição), mantendo a ordem por wallet e drenando wallets distintas em paralelo.
 
 A invariante final saldo == soma assinada do ledger é calculada pelo PostgreSQL, no mesmo snapshot e sem converter dinheiro. As suítes sqs-inbox, consumer-resilience, pending-reference-scheduler e permanent-failure agora verificam todas as wallets, além dos cenários de concorrência/reconciliação existentes. Divergência reprova o teste, não é reparada.

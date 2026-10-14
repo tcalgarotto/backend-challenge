@@ -287,6 +287,36 @@ test('same logical messageId with a divergent valid envelope is poison and canno
   expect(await inboxCount(original.messageId)).toBe(1);
 });
 
+test('SQS: moeda habilitada diferente da wallet é CURRENCY_MISMATCH permanente, vai à DLQ e não grava nada', async () => {
+  const target = await wallet();
+  const queues = await pair();
+  const usd = envelope(target);
+  const mismatch: WagerTransactionRequested = { ...usd, data: { ...usd.data, money: { amount: '25.00', currency: 'USD' } } };
+  await sendWagerTransactionRequested(client, queues.url, mismatch);
+  const worker = consumer(client, queues.url);
+  for (let receiveCount = 1; receiveCount <= 5; receiveCount++) {
+    expect(await pollMessage(worker)).toMatchObject({
+      messageId: mismatch.messageId, disposition: 'PERMANENT', receiveCount, errorCode: 'CURRENCY_MISMATCH' });
+  }
+  expect(await receive(queues.url)).toEqual([]);
+  const [deadLetter] = await receive(queues.dlqUrl);
+  expect(JSON.parse(deadLetter!.Body!)).toEqual(mismatch);
+  expect(await state(target.id)).toMatchObject({ balance: '100.00', version: '1', wagers: 1, ledger: 1 });
+  expect(await inboxCount(mismatch.messageId)).toBe(0);
+  expect((await query('SELECT count(*)::int n FROM wager_transactions WHERE external_transaction_id=?', [mismatch.data.externalTransactionId]))[0]!['n']).toBe(0);
+});
+
+test('SQS: wallet USD processa comando USD pelo mesmo consumidor', async () => {
+  const target = await openWallet.execute({ playerId: randomUUID(), initialBalance: { amount: '10.00', currency: 'USD' } });
+  const queues = await pair();
+  const base = envelope(target);
+  const bet: WagerTransactionRequested = { ...base, data: { ...base.data, money: { amount: '2.50', currency: 'USD' } } };
+  await sendWagerTransactionRequested(client, queues.url, bet);
+  expect(await pollMessage(consumer(client, queues.url))).toMatchObject({ disposition: 'ACKNOWLEDGED' });
+  expect(await state(target.id)).toMatchObject({ balance: '7.50', version: '2', wagers: 2, ledger: 2 });
+  expect((await query('SELECT currency FROM ledger_entries WHERE wallet_id=? ORDER BY wallet_version', [target.id])).map(row => row['currency'])).toEqual(['USD', 'USD']);
+});
+
 test('SIGTERM stops polling and returns in-flight visibility when the grace period expires', async () => {
   const target = await wallet();
   const queues = await pair();

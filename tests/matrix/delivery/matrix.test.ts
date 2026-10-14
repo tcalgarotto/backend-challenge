@@ -177,8 +177,28 @@ test('M02 exact money: decimal strings at scale 2, no float drift, invalid input
   }
   const usdBet = wager(w, 'BET', '1.00');
   const usd = await submit(api(0), { ...usdBet, body: { ...usdBet.body, money: { amount: '1.00', currency: 'USD' } } });
-
-  expect({ status: usd.status, code: usd.body.error?.code }).toEqual({ status: 400, code: 'INVALID_PAYLOAD' });
+  // USD é moeda habilitada; numa wallet BRL a divergência é detectada sob lock e nada é gravado.
+  expect({ status: usd.status, code: usd.body.error?.code }).toEqual({ status: 400, code: 'CURRENCY_MISMATCH' });
+  const unknownCodes: string[] = [];
+  for (const currency of ['brl', 'XYZ', 'BR L', '']) {
+    const bad = wager(w, 'BET', '1.00');
+    const r = await submit(api(1), { ...bad, body: { ...bad.body, money: { amount: '1.00', currency } } });
+    expect({ currency, status: r.status, code: r.body?.error?.code }).toEqual({ currency, status: 400, code: 'UNSUPPORTED_CURRENCY' });
+    unknownCodes.push(bad.body.externalTransactionId);
+  }
+  expect((await q('SELECT count(*)::int n FROM wager_transactions WHERE external_transaction_id = ANY(?::text[])',
+    [pgArray([usdBet.body.externalTransactionId, ...unknownCodes])]))[0]!['n']).toBe(0);
+  // Mesmo player com wallets BRL e USD abertas pela API; a USD aceita operação na própria moeda.
+  const openedUsd = await call(api(2), 'POST', '/wallets', { playerId: w.playerId, initialBalance: { amount: '5.00', currency: 'USD' } });
+  expect(openedUsd.status).toBe(201);
+  expect(openedUsd.body).toMatchObject({ playerId: w.playerId, balance: { amount: '5.00', currency: 'USD' }, version: 1 });
+  const httpUsdWallet = track({ id: openedUsd.body.id, playerId: w.playerId });
+  const usdWin = wager(httpUsdWallet, 'WIN', '1.00');
+  const usdProcessed = await submit(api(0), { ...usdWin, body: { ...usdWin.body, money: { amount: '1.00', currency: 'USD' } } });
+  expect(usdProcessed.body).toMatchObject({ status: 'PROCESSED', balance: { amount: '6.00', currency: 'USD' } });
+  const brlOnHttpUsd = await submit(api(1), wager(httpUsdWallet, 'BET', '1.00'));
+  expect({ status: brlOnHttpUsd.status, code: brlOnHttpUsd.body.error?.code }).toEqual({ status: 400, code: 'CURRENCY_MISMATCH' });
+  expect((await walletState(orm, httpUsdWallet.id))['balance']).toBe('6.00');
 
   const usdWallet = { id: randomUUID(), playerId: randomUUID() };
   await q("INSERT INTO wallets (id, player_id, currency, balance, version) VALUES (?, ?, 'USD', 0, 1)", [usdWallet.id, usdWallet.playerId]);
@@ -194,7 +214,8 @@ test('M02 exact money: decimal strings at scale 2, no float drift, invalid input
   for (const column of columns) expect(column).toMatchObject({ data_type: 'numeric', numeric_precision: 20, numeric_scale: 2 });
   expect((await walletState(orm, w.id))['balance']).toBe('1000.00');
   proof('exact-money', { balances, afterWin: win.body.balance, invalidAmountsRejected: invalid.length, columns: columns.length,
-    nonBrlOnBrlWallet: '400 INVALID_PAYLOAD', brlOnUsdWallet: '400 CURRENCY_MISMATCH' });
+    nonBrlOnBrlWallet: '400 CURRENCY_MISMATCH', brlOnUsdWallet: '400 CURRENCY_MISMATCH',
+    unknownCurrency: '400 UNSUPPORTED_CURRENCY', samePlayerBrlAndUsdWallets: true });
 }, 30_000);
 
 test('M03 challenge §8: 100.00 and two simultaneous 80.00 BETs on three instances, 10 wallets; retries never debit twice', async () => {

@@ -1,12 +1,12 @@
 import { DomainError } from './domain-error.js';
+import { isKnownCurrency } from './currency.js';
 
 export interface MoneyProps {
   readonly amount: string;
   readonly currency: string;
 }
 
-// O contrato fixa duas casas decimais, inclusive no modelo multimoeda.
-const currencies = new Set(['BRL', 'USD', 'EUR']);
+// O contrato fixa duas casas decimais; o registro de moedas recusa no boot qualquer escala diferente.
 const maximumMinorUnits = 10n ** 20n - 1n; // A faixa acompanha a coluna numeric(20,2) do PostgreSQL.
 const unsignedAmount = /^(0|[1-9][0-9]{0,17})\.[0-9]{2}$/;
 const signedAmount = /^-?(0|[1-9][0-9]{0,17})\.[0-9]{2}$/;
@@ -16,7 +16,7 @@ export class Money {
     private readonly minorUnits: bigint,
     public readonly currency: string,
   ) {
-    if (!currencies.has(currency)) throw new DomainError('UNSUPPORTED_CURRENCY');
+    if (!isKnownCurrency(currency)) throw new DomainError('UNSUPPORTED_CURRENCY');
     if (minorUnits > maximumMinorUnits || minorUnits < -maximumMinorUnits) {
       throw new DomainError('MONEY_OUT_OF_RANGE');
     }

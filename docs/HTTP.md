@@ -5,7 +5,7 @@ Rotas, formatos, status e códigos de erro da API. Decisões por trás do mapeam
 ## Regras de entrada
 
 - JSON com campos conhecidos e tipos estritos; campos desconhecidos são recusados. Strings não podem ser vazias.
-- Dinheiro é sempre `{ "amount": "25.00", "currency": "BRL" }`: string com exatamente duas casas, sem sinal, expoente, espaços ou zeros à esquerda. Número JSON, `"1.5"`, `"1e2"`, `"-1.00"`, `"01.00"` e `"1.000"` são recusados com 400. A API habilita BRL.
+- Dinheiro é sempre `{ "amount": "25.00", "currency": "BRL" }`: string com exatamente duas casas, sem sinal, expoente, espaços ou zeros à esquerda. Número JSON, `"1.5"`, `"1e2"`, `"-1.00"`, `"01.00"` e `"1.000"` são recusados com 400. A API habilita BRL, USD e EUR, todas com escala 2 (registro em `src/shared/domain/currency.ts`); `JWP_ENABLED_CURRENCIES` (ex.: `BRL,USD`) restringe esse conjunto e é validada no boot. Moeda fora do registro ou da allowlist, inclusive em minúsculas (`"brl"`), recebe 400 `UNSUPPORTED_CURRENCY`; moeda habilitada diferente da moeda da wallet recebe 400 `CURRENCY_MISMATCH`, sem gravar nada, por HTTP ou SQS. Cada player tem no máximo uma wallet por moeda; não há conversão cambial.
 - `playerId`, `walletId` e `transactionId` são UUIDs (comparados sem diferenciar maiúsculas). `providerId`, `externalTransactionId`, `roundId` e `gameId` são identificadores opacos, sensíveis a maiúsculas.
 - `POST /wagering/transactions` exige o header `Idempotency-Key`. O formato `provider:external` é só recomendação; a chave não é gerada nem lida do body e não entra no hash do payload.
 - Body da transação: `providerId`, `externalTransactionId`, `playerId`, `walletId`, `roundId`, `gameId`, `kind` e `money` obrigatórios. `referenceExternalTransactionId` é obrigatório para REFUND e ROLLBACK, opcional para WIN e proibido para BET e LOSS; `null` ou string vazia são inválidos. OPENING não pode ser enviado. BET, WIN, REFUND e ROLLBACK têm valor positivo; LOSS usa exatamente `"0.00"`.
@@ -110,7 +110,7 @@ No contrato atual, o 400 não identifica o campo inválido e `message` repete `c
 
 | HTTP | Código | Estado durável | O que o cliente faz |
 |---|---|---|---|
-| 400 | `INVALID_PAYLOAD`, `IDEMPOTENCY_KEY_REQUIRED`, `REFERENCE_REQUIRED`, `PLAYER_MISMATCH`, `CURRENCY_MISMATCH`, `INVALID_CURSOR` | Nada foi aceito | Corrigir o contrato ou o contexto |
+| 400 | `INVALID_PAYLOAD`, `UNSUPPORTED_CURRENCY`, `IDEMPOTENCY_KEY_REQUIRED`, `REFERENCE_REQUIRED`, `PLAYER_MISMATCH`, `CURRENCY_MISMATCH`, `INVALID_CURSOR` | Nada foi aceito | Corrigir o contrato ou o contexto |
 | 404 | `WALLET_NOT_FOUND`, `TRANSACTION_NOT_FOUND` | Recurso inexistente | Verificar a identidade |
 | 409 | `IDEMPOTENCY_CONFLICT` | A operação original continua intacta | Não reenviar payload diferente com a mesma chave |
 | 409 | `EXTERNAL_IDENTITY_CONFLICT` | A operação original continua intacta | Consultar por provider/external e recuperar a chave original |

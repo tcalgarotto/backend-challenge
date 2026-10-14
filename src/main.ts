@@ -3,14 +3,21 @@ import { SQSClient } from '@aws-sdk/client-sqs';
 import type { INestApplication } from '@nestjs/common';
 import { ApplicationWorkers } from './runtime/workers.js';
 import { loadEnvironment } from './config/env.js';
+import { configureCurrencies } from './shared/domain/currency.js';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
 import { openFinancialOrm } from './persistence/financial-orm.js';
 import { installHttpObservability } from './observability/http.js';
 import { Observability, observedQueue } from './observability/observability.js';
 import { InvalidJsonFilter } from './shared/http/invalid-json-filter.js';
+import { LocalProviderIdentity, assertLocalIdentityAllowed } from './shared/http/provider-identity.js';
 
 const config = loadEnvironment(process.env);
+// Registro e allowlist de moedas são validados antes de qualquer dependência externa.
+configureCurrencies(process.env);
+// Sem adapter de IdP no repositório, o boot usa identidade local; em produção exige opt-in explícito.
+const identity = new LocalProviderIdentity();
+assertLocalIdentityAllowed(process.env, identity);
 const { port, databaseUrl: url, readinessTimeoutMs } = config;
 // Readiness consulta todas as filas configuradas, incluindo DLQs monitoradas.
 // O contrato de readiness exige PostgreSQL e SQS em qualquer papel HTTP.
@@ -27,7 +34,7 @@ let workers: ApplicationWorkers | undefined;
 try {
   const observability = new Observability({ orm, readinessTimeoutMs, requiredDependencies: ['postgres', 'sqs'], ...(sqs ? { sqs: { client: sqs, queues } } : {}) });
   workers = config.workers ? new ApplicationWorkers(orm, sqs!, config.workers, observability) : undefined;
-  app = await NestFactory.create(AppModule.register(orm, observability, workers), { logger: false, abortOnError: false });
+  app = await NestFactory.create(AppModule.register(orm, observability, workers, identity), { logger: false, abortOnError: false });
   installHttpObservability(app, observability);
   app.useGlobalFilters(new InvalidJsonFilter());
   let closing = false;

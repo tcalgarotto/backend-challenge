@@ -5,7 +5,7 @@ Resumo curado da auditoria de segurança dos caminhos financeiros desta entrega.
 ## Resultado
 
 - **Achados confirmados: nenhum** dentro do escopo testado.
-- **Precisam de validação (sem severidade): 2**, ambos dependem de fatos de implantação que não estão no repositório.
+- **Precisam de validação (sem severidade): 2**, ambos dependem de fatos de implantação. Depois da auditoria, os dois foram tratados no item (tabela abaixo): o bind por código e teste; o IAM como requisito de implantação documentado, não verificado numa conta real.
 - **Hipóteses rejeitadas com evidência: 12**, por leitura de código e, quando o efeito era dinâmico, por teste em sandbox.
 
 Este resultado **não** significa que a aplicação não tenha vulnerabilidades. Ele vale para a matriz descrita abaixo, nas condições descritas abaixo.
@@ -40,16 +40,16 @@ Este resultado **não** significa que a aplicação não tenha vulnerabilidades.
 
 Nenhum dos dois itens tem severidade atribuída. Ambos dependem de como a aplicação é implantada.
 
-| Item | Onde | Por que fica em aberto | Como validar |
-|---|---|---|---|
-| Exposição do modo local | `src/shared/http/provider-identity.ts`, `Dockerfile`, `compose.yml` | A imagem define `HOST=0.0.0.0`; o Compose local publica a porta só em `127.0.0.1`. O bind e o adapter de identidade de uma implantação real não estão no repositório. | Confirmar o endereço de escuta e que a implantação injeta um adapter de IdP no lugar de `LocalProviderIdentity`. |
-| Quem pode publicar na fila de comandos | `src/messaging/sqs-wager-consumer.ts` | O consumer trata a fila como canal interno e aplica o mesmo efeito financeiro do HTTP. A política IAM (`sqs:SendMessage`) não está no repositório. | Revisar a política da fila de comandos na conta real, sem enviar mensagens de prova. |
+| Item | Onde | Achado da auditoria | Tratamento (item) | O que continua com a implantação |
+|---|---|---|---|---|
+| Exposição do modo local | `src/shared/http/provider-identity.ts`, `src/main.ts`, `Dockerfile`, `compose.yml` | A imagem definia `HOST=0.0.0.0`; o Compose local publica a porta só em `127.0.0.1`. | **Código e teste.** `HOST` padrão é `127.0.0.1`, inclusive na imagem; o Compose define `HOST=0.0.0.0` de forma explícita dentro do container. Com `NODE_ENV=production` e `LocalProviderIdentity` ativo, o boot falha com `INSECURE_LOCAL_AUTH_IN_PRODUCTION`, salvo `JWP_ALLOW_INSECURE_LOCAL_AUTH=true`. Prova: `tests/unit/deploy-hardening.test.ts`. | Injetar um adapter de IdP antes de expor a API; o opt-in é só para ambiente controlado. |
+| Quem pode publicar na fila de comandos | `src/messaging/sqs-wager-consumer.ts` | O consumer trata a fila como canal interno e aplica o mesmo efeito financeiro do HTTP. A política IAM não está no repositório. | **Requisito de implantação documentado.** Política de menor privilégio em [IAM.md](IAM.md): só o produtor tem `sqs:SendMessage` na fila de comandos. | Aplicar e revisar a política na conta real, sem enviar mensagens de prova. Não verificado nesta entrega. |
 
 O guard de provedor sem autenticação (`LocalProviderIdentity`, guard no-op) é a extensão do desafio descrita no ADR-010 de [ARCHITECTURE.md](../../ARCHITECTURE.md), não um achado. Uma implantação pública precisa do adapter de IdP antes de expor a API.
 
 ## Escopo e limites
 
-- **Cobertura:** o ledger de cobertura tem 13 unidades. 11 foram fechadas e 2 continuam abertas por dependerem da implantação (a tabela acima).
+- **Cobertura:** o ledger de cobertura tem 13 unidades. 11 foram fechadas e 2 ficaram abertas na auditoria por dependerem da implantação (a tabela acima registra o tratamento posterior).
 - **Sem crítico de cobertura:** a etapa de crítico de cobertura do skill **não** foi executada. Por isso a auditoria não declara cobertos os caminhos de `src` fora da matriz testada.
 - **Fora do escopo:** IdP real, infraestrutura de nuvem, políticas IAM e ingress, imagem em produção.
 - **Imagem:** a imagem não fixa `USER`, e o build usa a rede do host para instalar dependências. Nada disso foi exercitado nesta auditoria.
