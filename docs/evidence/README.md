@@ -21,11 +21,9 @@ Resultados medidos em 2026-10-13T19:32:29.548025-03:00 até 2026-10-13T19:41:57.
 
 ## Identidade do código
 
-- sourceCommit executado: `8175cfebdb87a002417a28f4d2779a458fb58caf`.
-- Entrega pública comparada: `42d3083f1c56f3cbbe21f6e4775869ed28dd5edd`.
-- Produto exportado: 142 arquivos, byte a byte idênticos; nenhuma diferença em src, tests, scripts, Compose, package.json ou bun.lock. Lista e digest em [product-tree.json](product-tree.json).
-- Digest da árvore protegida exportada: `a2c622e84f0f3a012bda7b93a402eef936e4e66f213fd2f3a89c4a8ca5b948ae`.
-- O código medido já utiliza LockMode.PESSIMISTIC_WRITE. As únicas mudanças posteriores desta tarefa são documentação, evidências e a regra de exportação desta pasta; nenhuma mudança no produto.
+- Execução histórica, anterior à multimoeda, à política de reversão configurável e às métricas de contenção. O commit medido não faz parte do histórico publicado deste repositório, então os resumos abaixo não são atribuídos a esta versão; os campos de commit dos JSONs foram trocados por `historical-pre-multicurrency`.
+- O código medido já utilizava LockMode.PESSIMISTIC_WRITE. A lista de arquivos exportados e o digest da árvore ficaram em [product-tree.json](product-tree.json), como registro daquela execução.
+- A versão final é medida com [scripts/load/final-candidate.sh](../../scripts/load/final-candidate.sh); ver [docs/LOAD_TEST.md](../LOAD_TEST.md#execução-da-versão-final).
 
 ## Ambiente
 

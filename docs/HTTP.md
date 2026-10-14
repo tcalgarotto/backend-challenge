@@ -118,6 +118,8 @@ No contrato atual, o 400 não identifica o campo inválido e `message` repete `c
 | 422 | `INSUFFICIENT_FUNDS` | REJECTED com evento | Replay não reavalia o saldo |
 | 422 | `REVERSAL_INSUFFICIENT_FUNDS` | REJECTED com evento | Reversão que deixaria saldo negativo; tratar à parte da aposta sem saldo |
 | 422 | `REFERENCE_CONTEXT_MISMATCH`, `REFERENCE_KIND_INVALID`, `REFERENCE_NOT_PROCESSED`, `REVERSAL_AMOUNT_MISMATCH`, `ALREADY_REVERSED`, `SELF_REFERENCE` | REJECTED com evento | Corrigir a causa; a mesma identidade continua terminal |
+
+`ALREADY_REVERSED` depende de `JWP_REVERSAL_POLICY`: no padrão `per_type`, cada referência aceita um REFUND e um ROLLBACK e só o segundo do mesmo tipo é rejeitado (REFUND+ROLLBACK da mesma BET devolvem o stake duas vezes); com `per_reference`, qualquer segunda reversão da mesma referência é rejeitada. Ver [ADR-005](../ARCHITECTURE.md#jwp-adr-005--referências-estados-e-política-de-reversão).
 | 422 | `REFERENCE_EXPIRED` | REJECTED com evento | A referência não chegou no prazo; não há reabertura automática |
 | 422 | `MONETARY_RANGE_EXCEEDED` | REJECTED com evento | O efeito excederia a faixa monetária; nada é truncado |
 | 503 | `INFRASTRUCTURE_UNAVAILABLE` | Nenhum resultado confirmado na resposta | Repetir com a **mesma** chave; um commit incerto se resolve pelo replay |

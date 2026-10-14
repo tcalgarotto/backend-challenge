@@ -82,6 +82,8 @@ test('O01/O02 over SQS: ack, lock wait with retry and redelivery are logged with
   } finally { await holder.rollback(); }
   expect(retried).toMatchObject({ disposition: 'RETRY', messageId: blocked.messageId, errorCode: 'INFRASTRUCTURE_UNAVAILABLE' });
   expect(value('sqlTransient', { channel: 'sqs', reason: 'lock_timeout' })).toBe(1);
+  // Contador monotônico: cada aborto 55P03 conta, inclusive antes do retry esgotar.
+  expect(value('lockConflicts', { reason: 'lock_timeout' })).toBeGreaterThanOrEqual(1);
   expect(value('retries', { component: 'sqs_consumer' })).toBe(1);
 
   const [redelivered] = await pollUntilObserved();

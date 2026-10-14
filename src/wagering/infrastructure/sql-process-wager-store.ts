@@ -1,3 +1,5 @@
+import { appliedReversalKinds } from './sql-reversal-guard.js';
+import { reversalPolicy } from '../domain/reversal-policy.js';
 import { WalletRecord, walletRecordRow } from '../../persistence/financial-orm.js';
 import { isKnownPermanentWagerFailure, permanentWagerDiagnostic } from '../../shared/infrastructure/permanent-wager-failure.js';
 import { runSqlTransaction, sqlTransactionPolicy } from '../../shared/infrastructure/sql-transaction.js';
@@ -151,13 +153,11 @@ export class SqlProcessWagerStore implements ProcessWagerStore {
       const [row] = await query(em,'SELECT * FROM wager_transactions WHERE provider_id=? AND external_transaction_id=?',[command.providerId,command.referenceExternalTransactionId]);
       if (row) reference = rehydrate(row);
     }
-    // Uma reversão aplicada por referência, independente do tipo (Migration202610110004).
-    let reversed = false;
-    if (reference && transaction.requiresReference()) {
-      reversed = (await query(em,`SELECT id FROM wager_transactions WHERE reference_transaction_id=? AND kind IN ('REFUND','ROLLBACK') AND status='PROCESSED'`,[reference.id])).length > 0;
-    }
+    // Reversões já aplicadas à referência; a política (JWP_REVERSAL_POLICY) decide a colisão (JWP-ADR-005).
+    const policy = reversalPolicy();
+    const applied = reference && transaction.requiresReference() ? await appliedReversalKinds(em, reference.id, policy) : [];
     if(diagnostic) ProcessWager.recordFailure(transaction);
-    const movement = diagnostic ? undefined : ProcessWager.applyToWallet(transaction, wallet, reference, reversed, at);
+    const movement = diagnostic ? undefined : ProcessWager.applyToWallet(transaction, wallet, reference, applied, at, undefined, policy);
     const snapshot = ProcessWager.snapshot(transaction, wallet);
     await query(em,`INSERT INTO wager_transactions(id,wallet_id,player_id,currency,provider_id,external_transaction_id,idempotency_key,
       payload_hash,round_id,game_id,kind,status,amount,reference_external_transaction_id,reference_transaction_id,

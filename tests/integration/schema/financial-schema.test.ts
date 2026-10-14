@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { EntityManager } from '@mikro-orm/postgresql';
+import { downToZeroAfterReversals } from '../support/reversal-policy-teardown.js';
 import { FinancialDecimalType, openFinancialOrm, WalletRecord } from '../../../src/persistence/financial-orm.js';
 
 type Q = (sql: string, args?: unknown[]) => Promise<Record<string, unknown>[]>;
@@ -101,7 +102,8 @@ beforeAll(async () => {
 },30000);
 afterAll(async () => {
   if (orm) {
-    try { await orm.migrator.down({to:0}); } finally { await orm.close(true); }
+    // Há REFUND e ROLLBACK aplicados à mesma BET (per_type): o down recusa e o banco descartável é esvaziado.
+    try { await downToZeroAfterReversals(orm,true); } finally { await orm.close(true); }
   }
 });
 
@@ -109,7 +111,8 @@ test('up/down/up restores functions, deferred triggers, unique reversal index an
   const q=query(orm.em.fork());
   expect((await q("SELECT count(*)::int AS n FROM pg_trigger WHERE tgname IN ('wallet_consistency','wager_consistency','ledger_consistency') AND tgdeferrable AND tginitdeferred"))[0]?.['n']).toBe(3);
   expect((await q("SELECT indisunique FROM pg_index WHERE indexrelid='wager_one_reversal'::regclass"))[0]?.['indisunique']).toBe(true);
-  expect((await q("SELECT pg_get_indexdef('wager_one_reversal'::regclass) AS def"))[0]?.['def']).toContain('(reference_transaction_id) WHERE');
+  expect((await q("SELECT pg_get_indexdef('wager_one_reversal'::regclass) AS def"))[0]?.['def']).toContain('(reference_transaction_id, kind) WHERE');
+  expect((await q("SELECT count(*)::int n FROM pg_trigger WHERE tgname='wager_reversal_policy' AND NOT tgisinternal"))[0]?.['n']).toBe(1);
   expect((await q("SELECT rolsuper OR rolcreaterole OR rolcreatedb OR rolcanlogin AS privileged FROM pg_roles WHERE rolname='jwp_runtime'"))[0]?.['privileged']).toBe(false);
   expect((await q("SELECT count(*)::int AS n FROM pg_class WHERE relowner=(SELECT oid FROM pg_roles WHERE rolname='jwp_runtime')"))[0]?.['n']).toBe(0);
   await runtime(async s => {
@@ -202,14 +205,22 @@ test('gaps, broken chain, wrong final balance/version and OPENING at wrong versi
   await violation(async q=>{const w=await wallet(q,'10.00');const t=await wager(q,w);await ledger(q,w,t,'1','0.00','10.00');});
 });
 
-test('only one processed reversal per reference, whatever its kind; WIN and rejected reversals do not reserve it',async () => {
+test('one processed reversal per (reference, kind); per_reference guard blocks a second kind; WIN and rejected reversals do not reserve it',async () => {
   await violation(async q=>{
     const {w}=await opening(q);const bet=await movement(q,w,'2','100.00','90.00',{kind:'BET',external:'bet-'+w},'DEBIT');
     const o={kind:'REFUND',reference:bet,referenceExternal:'bet-'+w};
     await movement(q,w,'3','90.00','100.00',o);await movement(q,w,'4','100.00','110.00',o);
   },'23505');
 
+  // Política per_type (padrão, sem parâmetro na TX): REFUND e ROLLBACK da mesma BET são aceitos pelo banco.
+  await runtime(async q=>{
+    const {w}=await opening(q);const bet=await movement(q,w,'2','100.00','90.00',{kind:'BET',external:'bet-'+w},'DEBIT');
+    await movement(q,w,'3','90.00','100.00',{kind:'REFUND',reference:bet,referenceExternal:'bet-'+w});
+    await movement(q,w,'4','100.00','110.00',{kind:'ROLLBACK',reference:bet,referenceExternal:'bet-'+w});
+  });
+  // per_reference publicado na TX: o gatilho jwp_reversal_policy_guard recusa o segundo tipo.
   await violation(async q=>{
+    await q("SELECT set_config('jwp.reversal_policy','per_reference',true)");
     const {w}=await opening(q);const bet=await movement(q,w,'2','100.00','90.00',{kind:'BET',external:'bet-'+w},'DEBIT');
     await movement(q,w,'3','90.00','100.00',{kind:'REFUND',reference:bet,referenceExternal:'bet-'+w});
     await movement(q,w,'4','100.00','110.00',{kind:'ROLLBACK',reference:bet,referenceExternal:'bet-'+w});

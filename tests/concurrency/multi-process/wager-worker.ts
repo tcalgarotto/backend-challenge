@@ -1,7 +1,10 @@
+import { configureReversalPolicy } from '../../../src/wagering/domain/reversal-policy.js';
 import { openFinancialOrm } from '../../../src/persistence/financial-orm.js';
 import { ProcessInboxWager, SqlInboxProcessWagerStore } from '../../../src/messaging/sql-inbox-process-wager-store.js';
 import { SqsWagerConsumer } from '../../../src/messaging/sqs-wager-consumer.js';
 import { sqsClient } from '../../integration/sqs/support/sqs.js';
+// Mesma validação de boot do servidor: política inválida encerra o processo sem ecoar o valor.
+configureReversalPolicy(process.env);
 
 const databaseUrl = process.env['JWP_WORKER_DATABASE_URL'];
 const queueUrl = process.env['JWP_WORKER_QUEUE_URL'];

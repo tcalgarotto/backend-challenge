@@ -5,6 +5,9 @@ import { OpenWallet } from '../../../src/wallet/application/open-wallet.js';
 import { SqlWalletOpeningStore } from '../../../src/wallet/infrastructure/sql-wallet-opening-store.js';
 import { ProcessInboxWager, SqlInboxProcessWagerStore } from '../../../src/messaging/sql-inbox-process-wager-store.js';
 import { SqlEventDeduplicator } from '../../../src/messaging/outbox/sqs-event-consumer.js';
+import { ProcessWager } from '../../../src/wagering/application/process-wager.js';
+import { SqlProcessWagerStore } from '../../../src/wagering/infrastructure/sql-process-wager-store.js';
+import { downToZeroAfterReversals } from '../support/reversal-policy-teardown.js';
 import { SqlOutboxStore } from '../../../src/messaging/outbox/sql-outbox-store.js';
 
 let orm: Awaited<ReturnType<typeof openFinancialOrm>>;
@@ -48,7 +51,7 @@ beforeAll(async () => {
   await relations(true);
   expect((await orm.migrator.getExecutedMigrations()).map(m => m.name)).toEqual([
     'Migration202610110002', 'Migration202610110003', 'Migration202610110004', 'Migration202610120005', 'Migration202610120006',
-    'Migration202610120007', 'Migration202610120008', 'Migration202610130009',
+    'Migration202610120007', 'Migration202610120008', 'Migration202610130009', 'Migration202610140010',
   ]);
   await q(`CREATE ROLE ${role} LOGIN PASSWORD 'migration_test_only'`);
   await q(`GRANT jwp_runtime TO ${role}`);
@@ -59,7 +62,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await runtimeOrm?.close(true);
   if (orm) try {
-    await orm.migrator.down({ to: 0 });
+    // O último teste deixa REFUND e ROLLBACK aplicados à mesma BET: o down recusa e o banco descartável é esvaziado.
+    await downToZeroAfterReversals(orm, true);
     await q(`DROP ROLE IF EXISTS ${role}`);
   } finally { await orm.close(true); }
 });
@@ -194,4 +198,34 @@ test('wallet timestamps migrate from the old schema, reverse and preserve histor
   expect(after).toEqual(before);
   await violation("UPDATE wallets SET updated_at=created_at-interval '1 second' WHERE id=?",[wallet.id],'23514');
   await violation("UPDATE wallets SET created_at=created_at+interval '1 second' WHERE id=?",[wallet.id],'23514');
+});
+
+test('reversal policy migration 0010 round-trips index and guard; down refuses while REFUND and ROLLBACK coexist', async () => {
+  const indexDef = async () => (await q("SELECT pg_get_indexdef('wager_one_reversal'::regclass) def"))[0]?.['def'] as string;
+  const guard = async () => (await q("SELECT count(*)::int n FROM pg_trigger WHERE tgname='wager_reversal_policy' AND NOT tgisinternal"))[0]?.['n'];
+  expect(await indexDef()).toContain('(reference_transaction_id, kind) WHERE');
+  expect(await guard()).toBe(1);
+  await orm.migrator.down({ migrations: ['Migration202610140010'] });
+  expect(await indexDef()).toContain('(reference_transaction_id) WHERE');
+  expect(await guard()).toBe(0);
+  expect((await q("SELECT count(*)::int n FROM pg_proc WHERE proname='jwp_reversal_policy_guard'"))[0]?.['n']).toBe(0);
+  await orm.migrator.up();
+  expect(await indexDef()).toContain('(reference_transaction_id, kind) WHERE');
+  expect(await guard()).toBe(1);
+
+  // Política padrão per_type: REFUND e ROLLBACK da mesma BET aplicados pelo papel de runtime.
+  const wallet = await new OpenWallet(new SqlWalletOpeningStore(runtimeOrm!)).execute({ playerId: randomUUID(),
+    initialBalance: { amount: '100.00', currency: 'BRL' } });
+  const processor = new ProcessWager(new SqlProcessWagerStore(runtimeOrm!));
+  const send = (kind: string, reference?: string) => { const id = randomUUID(); return processor.execute({ providerId: 'provider-m', externalTransactionId: id,
+    walletId: wallet.id, playerId: wallet.playerId, roundId: 'r', gameId: 'g', kind, money: { amount: '10.00', currency: 'BRL' },
+    ...(reference ? { referenceExternalTransactionId: reference } : {}) }, 'key:' + id).then(r => ({ ...r, id })); };
+  const bet = await send('BET');
+  expect((await send('REFUND', bet.id)).body).toMatchObject({ status: 'PROCESSED', balance: { amount: '100.00' } });
+  expect((await send('ROLLBACK', bet.id)).body).toMatchObject({ status: 'PROCESSED', balance: { amount: '110.00' } });
+  await expect(orm.migrator.down({ migrations: ['Migration202610140010'] })).rejects.toThrow('REVERSAL_POLICY_DOWN_BLOCKED');
+  // Down recusado é transacional: índice, gatilho e dados permanecem.
+  expect(await indexDef()).toContain('(reference_transaction_id, kind) WHERE');
+  expect(await guard()).toBe(1);
+  expect((await q("SELECT balance::text b FROM wallets WHERE id=?", [wallet.id]))[0]?.['b']).toBe('110.00');
 });

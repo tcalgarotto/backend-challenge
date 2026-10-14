@@ -1,3 +1,4 @@
+import { reversalPolicy, type ReversalPolicy } from '../domain/reversal-policy.js';
 import { LedgerDirection } from '../../wallet/domain/wallet-ledger-entry.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { Money, type MoneyProps } from '../../shared/domain/money.js';
@@ -88,8 +89,9 @@ export function parseWager(input: unknown, idempotencyKey: unknown): CreateWager
 export class WagerApplicationService {
   constructor(private readonly store: ProcessWagerStore) {}
   static applyToWallet(transaction: WagerTransaction, wallet: Wallet, reference: WagerTransaction | undefined,
-    reversed: boolean, at: Date, expiresAt = transaction.referenceExpiresAt): WalletMovement | undefined {
-    const decision = transaction.referenceDecision(reference, reversed);
+    appliedReversals: readonly WagerTransactionKind[], at: Date, expiresAt = transaction.referenceExpiresAt,
+    policy: ReversalPolicy = reversalPolicy()): WalletMovement | undefined {
+    const decision = transaction.referenceDecision(reference, appliedReversals, policy);
     if (decision.status === 'REJECT') {
       transaction.reject(decision.code);
       return undefined;

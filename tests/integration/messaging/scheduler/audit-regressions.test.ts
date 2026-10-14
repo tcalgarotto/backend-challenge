@@ -5,6 +5,8 @@ import {
   SqlPendingReferenceScheduler,
   type PendingReferenceClaim,
 } from '../../../../src/messaging/pending-reference-scheduler.js';
+import { downToZeroAfterReversals } from '../../support/reversal-policy-teardown.js';
+import { configureReversalPolicy } from '../../../../src/wagering/domain/reversal-policy.js';
 import { OpenWallet } from '../../../../src/wallet/application/open-wallet.js';
 import { SqlWalletOpeningStore } from '../../../../src/wallet/infrastructure/sql-wallet-opening-store.js';
 import { ProcessWager } from '../../../../src/wagering/application/process-wager.js';
@@ -41,7 +43,7 @@ beforeEach(async () => {
 afterAll(async () => {
   if (!orm) return;
   try {
-    if (migrated) await orm.migrator.down({ to: 0 });
+    if (migrated) await downToZeroAfterReversals(orm);
   } finally {
     await orm.close(true);
   }
@@ -358,7 +360,20 @@ test('competing pending reversals are rechecked under wallet lock and only one g
  expect(final[0]!['calculated']).toBe('100.00');
 });
 
-test('pending REFUND and ROLLBACK of the same BET: one reversal applies, the other is ALREADY_REVERSED',async()=>{
+test('pending REFUND and ROLLBACK of the same BET under per_type (default): both apply, stake credited twice',async()=>{
+ const target=await wallet(),ids=identities(target),refund=await pendingRefund(ids);
+ const rollback=await pendingRefund({...ids,refundExternalTransactionId:'rollback-'+randomUUID()},'ROLLBACK');
+ await referenceBet(ids);
+ await due(refund.transactionId,rollback.transactionId);
+ const results=await Promise.all([new SqlPendingReferenceScheduler(orm).runOnce(),new SqlPendingReferenceScheduler(orm).runOnce()]);
+ expect(results.map(x=>'transactionId' in x ? x.transactionId : null).sort()).toEqual([refund.transactionId,rollback.transactionId].sort());
+ expect(results.filter(x=>x.status==='PROCESSED')).toHaveLength(2);
+ expect(await financialState(target.id)).toMatchObject({balance:'125.00',version:'4',ledger:4});
+});
+
+test('pending REFUND and ROLLBACK of the same BET under per_reference: one reversal applies, the other is ALREADY_REVERSED',async()=>{
+ configureReversalPolicy({JWP_REVERSAL_POLICY:'per_reference'});
+ try {
  const target=await wallet(),ids=identities(target),refund=await pendingRefund(ids);
  const rollback=await pendingRefund({...ids,refundExternalTransactionId:'rollback-'+randomUUID()},'ROLLBACK');
  await referenceBet(ids);
@@ -368,4 +383,5 @@ test('pending REFUND and ROLLBACK of the same BET: one reversal applies, the oth
  expect(results.filter(x=>x.status==='PROCESSED')).toHaveLength(1);
  expect(results.filter(x=>x.status==='REJECTED')).toEqual([expect.objectContaining({failureCode:'ALREADY_REVERSED'})]);
  expect(await financialState(target.id)).toMatchObject({balance:'100.00',version:'3',ledger:3});
+ } finally { configureReversalPolicy({}); }
 });

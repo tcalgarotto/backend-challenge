@@ -244,12 +244,15 @@ Modelo em [`.env.example`](../.env.example) (`cp .env.example .env`; Bun carrega
 | `AWS_REGION` | `us-east-1` | `src/config/env.ts` | Região do cliente SQS; credenciais pela cadeia do SDK |
 | `JWP_WORKER_INTERVAL_MS` | `250` | `src/config/env.ts` | Inteiro de 1 a 60000 (só com `workers`) |
 | `JWP_ENABLED_CURRENCIES` | ausente ou vazia = `BRL,USD,EUR` | `src/shared/domain/currency.ts` (`configureCurrencies`, chamada em `src/main.ts` antes do ORM) | Lista separada por vírgula, subconjunto do registro, sem normalizar caixa e sem repetição. Valor inválido encerra o boot com `INVALID_CURRENCY_CODE`, `UNKNOWN_CURRENCY` ou `DUPLICATE_CURRENCY` (só índice e tamanho do item, nunca o valor). Fora da allowlist, novas wallets e wagers recebem 400 `UNSUPPORTED_CURRENCY` |
+| `JWP_REVERSAL_POLICY` | ausente ou vazia = `per_type` | `src/wagering/domain/reversal-policy.ts` (`configureReversalPolicy`, chamada em `src/main.ts` antes do ORM) | `per_type`: um REFUND e um ROLLBACK por referência (REFUND+ROLLBACK da mesma BET devolvem o stake duas vezes); `per_reference`: uma reversão por referência, de qualquer tipo. Outro valor encerra o boot com `INVALID_REVERSAL_POLICY` (só o tamanho, nunca o valor). Todas as réplicas e workers devem usar o mesmo valor ([ADR-005](../ARCHITECTURE.md#jwp-adr-005--referências-estados-e-política-de-reversão)) |
 
-`JWP_ENABLED_CURRENCIES` não passa por `loadEnvironment`: é validada logo depois, por `configureCurrencies`, e o erro de boot é `CurrencyConfigError`, não `INVALID_ENVIRONMENT`.
+`JWP_ENABLED_CURRENCIES` e `JWP_REVERSAL_POLICY` não passam por `loadEnvironment`: são validadas logo depois, por `configureCurrencies` e `configureReversalPolicy`, e os erros de boot são `CurrencyConfigError` e `ReversalPolicyConfigError`, não `INVALID_ENVIRONMENT`.
 
 ### Readiness e logs
 
 `/health/live` responde `{"status":"ok"}` sem consultar dependências. `/health/ready` exige PostgreSQL e SQS alcançáveis em qualquer topologia HTTP; sem filas configuradas no modo só-HTTP, SQS aparece como `not_configured` e a resposta é 503 `unavailable`. Health e `/metrics` são públicos.
+
+Métricas de contenção: `jwp_lock_conflicts_total` soma cada aborto SQL por `lock_timeout`/`deadlock`/`serialization` (mesmo quando o retry do caso de uso conclui); `jwp_postgres_lock_waiters` continua sendo o gauge do instante do scrape; `jwp_sql_transient_failures_total` incrementa nos canais `http` e `sqs` quando os retries se esgotam e a falha vira 503/`RETRY`.
 
 Logs HTTP são JSON. O `correlationId` vem do contexto da requisição (`response.locals`), é o mesmo passado ao caso de uso e gravado nos eventos, e não aparece nas respostas de sucesso. `walletId` entra no log quando existe. O logger não registra saldo nem payload; chaves sensíveis, credenciais em URLs e valores de autorização viram `[REDACTED]` antes do limite de tamanho. IDs não são labels de métrica.
 

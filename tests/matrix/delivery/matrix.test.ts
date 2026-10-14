@@ -14,6 +14,7 @@ import { openFinancialOrm } from '../../../src/persistence/financial-orm.js';
 import { SqlEventDeduplicator, SqsEventConsumer, type EventConsumption } from '../../../src/messaging/outbox/sqs-event-consumer.js';
 import { sendWagerTransactionRequested } from '../../../src/messaging/wager-message.js';
 import { canonicalJson } from '../../../src/wagering/application/process-wager.js';
+import { downToZeroAfterReversals } from '../../integration/support/reversal-policy-teardown.js';
 import { isolatedPair, type QueuePair } from '../../integration/sqs/support/sqs.js';
 import {
   Child, PROVIDER, call, countBy, envelope, httpStats, openWallet, reconcile, requireSqs, requiredInfrastructure, sqsClient,
@@ -24,12 +25,16 @@ const role = `jwp_matrix_${randomUUID().replaceAll('-', '')}`;
 let orm: Orm, client: SQSClient, commands: QueuePair, events: QueuePair;
 let ownerUrl: string, sqsEndpoint: string, runtimeUrl: string, migrated = false;
 let apiEnv: Record<string, string>;
+let worker: (name: string, script: string, queueUrl?: string, policy?: string) => Child;
+let perReferenceCommands: QueuePair | undefined;
 const apis: ApiInstance[] = [], workers: Child[] = [], publishers: Child[] = [], schedulers: Child[] = [];
 const wallets: string[] = [];
 const q = (sql: string, args: unknown[] = []) => orm.em.fork().getConnection().execute<Record<string, any>[]>(sql, args);
 const pgArray = (values: readonly string[]) => `{${values.join(',')}}`;
 const proof = (name: string, data: Record<string, unknown>) => console.log(JSON.stringify({ proof: name, ...data }));
-const children = () => [...apis.map(api => api.child), ...workers, ...publishers, ...schedulers];
+// Processos per_reference do M08 ficam fora de apis/workers para não mudar a política dos demais cenários.
+const strictChildren: Child[] = [];
+const children = () => [...apis.map(api => api.child), ...workers, ...publishers, ...schedulers, ...strictChildren];
 const api = (i: number) => apis[i % apis.length]!;
 const track = (w: WalletRef) => { wallets.push(w.id); return w; };
 const newWallet = async (amount = '100.00', i = 0) => track(await openWallet(api(i), amount));
@@ -59,8 +64,10 @@ beforeAll(async () => {
   expect(executed).toEqual(firstUp);
   expect(executed).toContain('Migration202610120005');
   const [reversalIndex] = await q("SELECT indexdef FROM pg_indexes WHERE indexname='wager_one_reversal'");
-  expect(reversalIndex!['indexdef']).toContain('(reference_transaction_id)');
-  expect(reversalIndex!['indexdef']).not.toContain('kind)');
+  // Garantia no banco da política padrão per_type: índice único por (referência, tipo) (Migration202610140010).
+  expect(reversalIndex!['indexdef']).toContain('(reference_transaction_id, kind)');
+  const [guard] = await q("SELECT tgname FROM pg_trigger WHERE tgname='wager_reversal_policy' AND NOT tgisinternal");
+  expect(guard).toEqual({ tgname: 'wager_reversal_policy' });
 
 
   await q(`CREATE ROLE ${role} LOGIN PASSWORD 'matrix_test_only'`);
@@ -81,9 +88,12 @@ beforeAll(async () => {
   apiEnv = {
     JWP_DATABASE_URL: runtimeUrl, JWP_SQS_ENDPOINT: sqsEndpoint, JWP_SQS_QUEUE_URLS: contractUrls.join(','),
     AWS_REGION: 'us-east-1', AWS_ACCESS_KEY_ID: 'test', AWS_SECRET_ACCESS_KEY: 'test',
+    // Vazio equivale a ausente: prova o padrão per_type mesmo se o shell exportar outra política.
+    JWP_REVERSAL_POLICY: '',
   };
-  const worker = (name: string, script: string, queueUrl?: string) => Child.spawn(name, ['bun', `tests/matrix/delivery/${script}`], {
+  worker = (name: string, script: string, queueUrl?: string, policy = '') => Child.spawn(name, ['bun', `tests/matrix/delivery/${script}`], {
     JWP_WORKER_DATABASE_URL: runtimeUrl, JWP_WORKER_SQS_ENDPOINT: sqsEndpoint, ...(queueUrl ? { JWP_WORKER_QUEUE_URL: queueUrl } : {}),
+    JWP_REVERSAL_POLICY: policy,
   });
   apis.push(...await Promise.all([1, 2, 3].map(i => startApi(`api-${i}`, apiEnv))));
   workers.push(...[1, 2, 3].map(i => worker(`sqs-worker-${i}`, 'wager-worker.ts', commands.url)));
@@ -100,11 +110,12 @@ beforeAll(async () => {
 afterAll(async () => {
   // Falha ao parar um filho não pode impedir down das migrations e DROP ROLE.
   await Promise.allSettled(children().map(child => child.stop()));
-  await Promise.allSettled([commands, events].filter(Boolean).map(pair => pair.dispose()));
+  await Promise.allSettled([commands, events, perReferenceCommands].filter(Boolean).map(pair => pair!.dispose()));
   client?.destroy();
   if (!orm) return;
   try {
-    if (migrated) await orm.migrator.down({ to: 0 });
+    // per_type deixa REFUND e ROLLBACK aplicados à mesma BET; o down recusa e o banco descartável é esvaziado.
+    if (migrated) await downToZeroAfterReversals(orm, true);
     await q(`DROP ROLE IF EXISTS ${role}`);
   } finally {
     await orm.close(true);
@@ -143,7 +154,7 @@ test('M01 processes: three compiled API instances, three SQS workers, two publis
   expect(metrics.status).toBe(200);
   const exposition = await metrics.text();
   for (const name of ['jwp_wager_transactions_total', 'jwp_duplicates_total', 'jwp_retries_total', 'jwp_outbox_pending_events',
-    'jwp_wager_processing_duration_seconds', 'jwp_postgres_lock_waiters', 'jwp_sqs_queue_messages']) expect(exposition).toContain(name);
+    'jwp_wager_processing_duration_seconds', 'jwp_postgres_lock_waiters', 'jwp_lock_conflicts_total', 'jwp_sqs_queue_messages']) expect(exposition).toContain(name);
   const backends = [...workers, ...publishers, ...schedulers].map(child => child.of('ready')[0]!['backend']);
   expect(new Set(backends).size).toBe(backends.length);
   proof('processes', { testRunner: process.pid, processes: all.map(c => ({ name: c.name, pid: c.pid })), ready: health[0] });
@@ -339,44 +350,53 @@ test('M07 auditable append-only ledger: cursor pages, chained balances, no ledge
   proof('ledger', { entries: items.length, pages, lossAndRejectedEntries: 0, appendOnly: true, reconciliation: rec.body });
 }, 30_000);
 
-test('M08 reversal addendum: one applied reversal per referenced transaction, any kind; ROLLBACK of REFUND allowed', async () => {
-  const states: Record<string, unknown> = {};
+// M08: política de reversão (JWP-ADR-005). Padrão per_type, conforme o enunciado: um REFUND e um ROLLBACK por
+// referência; a mesma BET pode ser creditada duas vezes se o provedor enviar os dois tipos (comportamento documentado).
+// per_reference, opcional por JWP_REVERSAL_POLICY, mantém uma única reversão por referência.
+const appliedByReference = async (reference: string) => (await q(`SELECT t.kind FROM wager_transactions t
+  JOIN wager_transactions b ON b.id=t.reference_transaction_id
+  WHERE b.external_transaction_id=? AND t.status='PROCESSED' AND t.kind IN ('REFUND','ROLLBACK') ORDER BY t.kind`, [reference])).map(r => r['kind']);
 
+test('M08 reversal policy per_type (default): one REFUND and one ROLLBACK per reference over HTTP and SQS; same type twice rejected', async () => {
   const a = await newWallet('100.00');
   const betA = wager(a, 'BET', '25.00');
   expect((await submit(api(0), betA)).body.balance.amount).toBe('75.00');
   const refundA = wager(a, 'REFUND', '25.00', betA.body.externalTransactionId);
   expect((await submit(api(1), refundA)).body).toMatchObject({ status: 'PROCESSED', balance: { amount: '100.00' } });
-  const rollbackBetA = await submit(api(2), wager(a, 'ROLLBACK', '25.00', betA.body.externalTransactionId));
-  expect(rollbackBetA).toMatchObject({ status: 422, body: { status: 'REJECTED', failureCode: 'ALREADY_REVERSED', balance: { amount: '100.00' } } });
+  const rollbackA = wager(a, 'ROLLBACK', '25.00', betA.body.externalTransactionId);
+  // Valor integral da aposta creditado pela segunda vez: REFUND e ROLLBACK são tipos distintos.
+  expect(await submit(api(2), rollbackA)).toMatchObject({ status: 200, body: { status: 'PROCESSED', balance: { amount: '125.00' } } });
+  expect(await submit(api(0), wager(a, 'REFUND', '25.00', betA.body.externalTransactionId)))
+    .toMatchObject({ status: 422, body: { status: 'REJECTED', failureCode: 'ALREADY_REVERSED', balance: { amount: '125.00' } } });
+  expect((await submit(api(1), wager(a, 'ROLLBACK', '25.00', betA.body.externalTransactionId))).body.failureCode).toBe('ALREADY_REVERSED');
+  expect(await submit(api(2), rollbackA)).toMatchObject({ status: 200, body: { balance: { amount: '125.00' }, idempotentReplay: true } });
   const rollbackRefund = wager(a, 'ROLLBACK', '25.00', refundA.body.externalTransactionId);
-  expect((await submit(api(0), rollbackRefund)).body).toMatchObject({ status: 'PROCESSED', balance: { amount: '75.00' } });
-  const secondRollbackRefund = await submit(api(1), wager(a, 'ROLLBACK', '25.00', refundA.body.externalTransactionId));
-  expect(secondRollbackRefund.body).toMatchObject({ status: 'REJECTED', failureCode: 'ALREADY_REVERSED' });
-  const rollbackOfRollback = await submit(api(2), wager(a, 'ROLLBACK', '25.00', rollbackRefund.body.externalTransactionId));
-  expect(rollbackOfRollback.body).toMatchObject({ status: 'REJECTED', failureCode: 'REFERENCE_KIND_INVALID' });
-  states['refundThenRollback'] = await walletState(orm, a.id);
-  expect(states['refundThenRollback']).toMatchObject({ balance: '75.00', ledger: 4 });
+  expect((await submit(api(0), rollbackRefund)).body).toMatchObject({ status: 'PROCESSED', balance: { amount: '100.00' } });
+  expect((await submit(api(1), wager(a, 'ROLLBACK', '25.00', refundA.body.externalTransactionId))).body.failureCode).toBe('ALREADY_REVERSED');
+  expect((await submit(api(2), wager(a, 'ROLLBACK', '25.00', rollbackRefund.body.externalTransactionId))).body.failureCode).toBe('REFERENCE_KIND_INVALID');
+  expect(await walletState(orm, a.id)).toMatchObject({ balance: '100.00', ledger: 5, credits: 3, debits: 2 });
+  expect(await appliedByReference(betA.body.externalTransactionId)).toEqual(['REFUND', 'ROLLBACK']);
 
-
-  const b = await newWallet('100.00');
-  const betB = wager(b, 'BET', '25.00');
-  await submit(api(0), betB);
-  expect((await submit(api(1), wager(b, 'ROLLBACK', '25.00', betB.body.externalTransactionId))).body.balance.amount).toBe('100.00');
-  expect((await submit(api(2), wager(b, 'REFUND', '25.00', betB.body.externalTransactionId))).body)
-    .toMatchObject({ status: 'REJECTED', failureCode: 'ALREADY_REVERSED', balance: { amount: '100.00' } });
-
-
+  // Corrida de tipos misturados em três APIs: exatamente um REFUND e um ROLLBACK aplicados.
   const c = await newWallet('100.00');
   const betC = wager(c, 'BET', '25.00');
   await submit(api(0), betC);
-  const racers = [wager(c, 'REFUND', '25.00', betC.body.externalTransactionId), wager(c, 'ROLLBACK', '25.00', betC.body.externalTransactionId),
-    ...Array.from({ length: 4 }, () => wager(c, 'REFUND', '25.00', betC.body.externalTransactionId))];
+  const racers = Array.from({ length: 6 }, (_, i) => wager(c, i % 2 ? 'ROLLBACK' : 'REFUND', '25.00', betC.body.externalTransactionId));
   const raced = await Promise.all(racers.map((r, i) => submit(api(i), r)));
-  expect(raced.filter(r => r.status === 200)).toHaveLength(1);
-  expect(raced.filter(r => r.status === 422 && r.body.failureCode === 'ALREADY_REVERSED')).toHaveLength(5);
-  expect(await walletState(orm, c.id)).toMatchObject({ balance: '100.00', credits: 2, debits: 1 });
+  expect(raced.filter(r => r.status === 200)).toHaveLength(2);
+  expect(raced.filter(r => r.status === 422 && r.body.failureCode === 'ALREADY_REVERSED')).toHaveLength(4);
+  expect(await walletState(orm, c.id)).toMatchObject({ balance: '125.00', credits: 3, debits: 1 });
+  expect(await appliedByReference(betC.body.externalTransactionId)).toEqual(['REFUND', 'ROLLBACK']);
 
+  // SQS: REFUND e ROLLBACK duplicados da mesma BET pelos três workers.
+  const s = await newWallet('100.00');
+  const betS = wager(s, 'BET', '25.00');
+  await submit(api(0), betS);
+  const sqsReversals = Array.from({ length: 4 }, (_, i) => envelope(wager(s, i % 2 ? 'ROLLBACK' : 'REFUND', '25.00', betS.body.externalTransactionId)));
+  await Promise.all(sqsReversals.map(m => sendWagerTransactionRequested(client, commands.url, m)));
+  await acknowledged(sqsReversals.map(m => m.messageId));
+  expect(await walletState(orm, s.id)).toMatchObject({ balance: '125.00', credits: 3, debits: 1 });
+  expect(await appliedByReference(betS.body.externalTransactionId)).toEqual(['REFUND', 'ROLLBACK']);
 
   const d = await newWallet('100.00');
   const betD = wager(d, 'BET', '25.00');
@@ -395,17 +415,86 @@ test('M08 reversal addendum: one applied reversal per referenced transaction, an
   const negative = await submit(api(2), wager(e, 'ROLLBACK', '50.00', winE.body.externalTransactionId));
   expect(negative).toMatchObject({ status: 422, body: { status: 'REJECTED', failureCode: 'REVERSAL_INSUFFICIENT_FUNDS', balance: { amount: '10.00' } } });
 
-  const applied = await q(`SELECT reference_transaction_id, count(*)::int n FROM wager_transactions
-    WHERE status='PROCESSED' AND kind IN ('REFUND','ROLLBACK') GROUP BY 1 HAVING count(*) > 1`);
-  expect(applied).toEqual([]);
+  const sameType = await q(`SELECT reference_transaction_id, kind, count(*)::int n FROM wager_transactions
+    WHERE status='PROCESSED' AND kind IN ('REFUND','ROLLBACK') GROUP BY 1,2 HAVING count(*) > 1`);
+  expect(sameType).toEqual([]);
   const rejectedLedger = await q(`SELECT count(*)::int n FROM ledger_entries l JOIN wager_transactions t ON t.id=l.transaction_id WHERE t.status<>'PROCESSED'`);
   expect(rejectedLedger[0]!['n']).toBe(0);
-  proof('reversal-once-per-reference', {
-    refundThenRollback: '422 ALREADY_REVERSED', rollbackOfRefund: 'PROCESSED once', rollbackOfRollback: 'REFERENCE_KIND_INVALID',
-    inverseOrder: '422 ALREADY_REVERSED', concurrentReversals: { racers: racers.length, applied: 1 },
-    reversalNegative: 'REVERSAL_INSUFFICIENT_FUNDS', duplicateAppliedReversals: 0,
+  proof('reversal-policy-per-type', {
+    refundThenRollbackSameBet: 'both PROCESSED, stake credited twice (125.00)', sameTypeTwice: '422 ALREADY_REVERSED',
+    rollbackOfRefund: 'PROCESSED once', rollbackOfRollback: 'REFERENCE_KIND_INVALID',
+    httpMixedRace: { racers: racers.length, applied: 2 }, sqsMixed: { messages: sqsReversals.length, applied: 2 },
+    reversalNegative: 'REVERSAL_INSUFFICIENT_FUNDS', duplicateSameTypeReversals: 0,
   });
-}, 60_000);
+}, 90_000);
+
+test('M08 reversal policy per_reference (JWP_REVERSAL_POLICY): one reversal per reference over HTTP and SQS, races included', async () => {
+  const strict = await Promise.all([1, 2, 3].map(i => startApi(`api-per-reference-${i}`, { ...apiEnv, JWP_REVERSAL_POLICY: 'per_reference' })));
+  perReferenceCommands = await isolatedPair(client, 'wager-transactions.fifo');
+  const strictWorkers = [1, 2].map(i => worker(`sqs-worker-per-reference-${i}`, 'wager-worker.ts', perReferenceCommands!.url, 'per_reference'));
+  strictChildren.push(...strict.map(x => x.child), ...strictWorkers);
+  try {
+  await Promise.all(strictWorkers.map(child => child.waitFor(line => line['type'] === 'ready', 'ready')));
+  const sapi = (i: number) => strict[i % strict.length]!;
+
+  const a = await newWallet('100.00');
+  const betA = wager(a, 'BET', '25.00');
+  await submit(sapi(0), betA);
+  const refundA = wager(a, 'REFUND', '25.00', betA.body.externalTransactionId);
+  expect((await submit(sapi(1), refundA)).body).toMatchObject({ status: 'PROCESSED', balance: { amount: '100.00' } });
+  expect(await submit(sapi(2), wager(a, 'ROLLBACK', '25.00', betA.body.externalTransactionId)))
+    .toMatchObject({ status: 422, body: { status: 'REJECTED', failureCode: 'ALREADY_REVERSED', balance: { amount: '100.00' } } });
+  const rollbackRefund = wager(a, 'ROLLBACK', '25.00', refundA.body.externalTransactionId);
+  expect((await submit(sapi(0), rollbackRefund)).body).toMatchObject({ status: 'PROCESSED', balance: { amount: '75.00' } });
+  expect((await submit(sapi(1), wager(a, 'ROLLBACK', '25.00', refundA.body.externalTransactionId))).body.failureCode).toBe('ALREADY_REVERSED');
+  expect(await walletState(orm, a.id)).toMatchObject({ balance: '75.00', ledger: 4 });
+
+  const b = await newWallet('100.00');
+  const betB = wager(b, 'BET', '25.00');
+  await submit(sapi(0), betB);
+  expect((await submit(sapi(1), wager(b, 'ROLLBACK', '25.00', betB.body.externalTransactionId))).body.balance.amount).toBe('100.00');
+  expect((await submit(sapi(2), wager(b, 'REFUND', '25.00', betB.body.externalTransactionId))).body)
+    .toMatchObject({ status: 'REJECTED', failureCode: 'ALREADY_REVERSED', balance: { amount: '100.00' } });
+
+  // Corrida de tipos diferentes na mesma referência: exatamente uma reversão.
+  const c = await newWallet('100.00');
+  const betC = wager(c, 'BET', '25.00');
+  await submit(sapi(0), betC);
+  const racers = Array.from({ length: 6 }, (_, i) => wager(c, i % 2 ? 'ROLLBACK' : 'REFUND', '25.00', betC.body.externalTransactionId));
+  const raced = await Promise.all(racers.map((r, i) => submit(sapi(i), r)));
+  expect(raced.filter(r => r.status === 200)).toHaveLength(1);
+  expect(raced.filter(r => r.status === 422 && r.body.failureCode === 'ALREADY_REVERSED')).toHaveLength(5);
+  expect(await walletState(orm, c.id)).toMatchObject({ balance: '100.00', credits: 2, debits: 1 });
+  expect(await appliedByReference(betC.body.externalTransactionId)).toHaveLength(1);
+
+  // SQS com workers per_reference: REFUND e ROLLBACK da mesma BET, só um aplicado.
+  const s = await newWallet('100.00');
+  const betS = wager(s, 'BET', '25.00');
+  await submit(sapi(0), betS);
+  const sqsReversals = Array.from({ length: 4 }, (_, i) => envelope(wager(s, i % 2 ? 'ROLLBACK' : 'REFUND', '25.00', betS.body.externalTransactionId)));
+  await Promise.all(sqsReversals.map(m => sendWagerTransactionRequested(client, perReferenceCommands!.url, m)));
+  const wanted = new Set(sqsReversals.map(m => m.messageId));
+  await waitUntil(async () => new Set(strictWorkers.flatMap(w => w.of('message'))
+    .filter(l => l['disposition'] === 'ACKNOWLEDGED' && wanted.has(l['messageId'] as string)).map(l => l['messageId'])).size === wanted.size || undefined,
+  'per_reference workers acknowledge the reversals', 45_000);
+  expect(await walletState(orm, s.id)).toMatchObject({ balance: '100.00', credits: 2, debits: 1 });
+  expect(await appliedByReference(betS.body.externalTransactionId)).toHaveLength(1);
+  const sqsRejected = await q(`SELECT count(*)::int n FROM wager_message_inbox WHERE message_id = ANY(?::text[])
+    AND result_snapshot->'body'->>'failureCode'='ALREADY_REVERSED'`, [pgArray(sqsReversals.map(m => m.messageId))]);
+  expect(sqsRejected[0]!['n']).toBe(3);
+
+  const multi = await q(`SELECT count(*)::int n FROM (SELECT t.reference_transaction_id FROM wager_transactions t
+    WHERE t.wallet_id = ANY(?::uuid[]) AND t.status='PROCESSED' AND t.kind IN ('REFUND','ROLLBACK')
+    GROUP BY 1 HAVING count(*) > 1) d`, [pgArray([a.id, b.id, c.id, s.id])]);
+  expect(multi[0]!['n']).toBe(0);
+  proof('reversal-policy-per-reference', {
+    refundThenRollback: '422 ALREADY_REVERSED', inverseOrder: '422 ALREADY_REVERSED', rollbackOfRefund: 'PROCESSED once',
+    httpMixedRace: { racers: racers.length, applied: 1 }, sqsMixed: { messages: sqsReversals.length, applied: 1 },
+  });
+  } finally {
+    await Promise.allSettled(strictChildren.splice(0).map(child => child.stop()));
+  }
+}, 90_000);
 
 test('M09 HTTP contract: happy paths and distinct error classes', async () => {
   const playerId = randomUUID();

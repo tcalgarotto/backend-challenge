@@ -4,6 +4,7 @@ import type { SQSClient } from '@aws-sdk/client-sqs';
 import { openFinancialOrm } from '../../../src/persistence/financial-orm.js';
 import { SqlEventDeduplicator, SqsEventConsumer, type EventConsumption } from '../../../src/messaging/outbox/sqs-event-consumer.js';
 import { sendWagerTransactionRequested } from '../../../src/messaging/wager-message.js';
+import { downToZeroAfterReversals } from '../../integration/support/reversal-policy-teardown.js';
 import { isolatedPair, requireSqs, sqsClient, type QueuePair } from '../../integration/sqs/support/sqs.js';
 import {
   Child, call, envelope, httpStats, openWallet, reconcile, requiredInfrastructure, startApi, submit, wager, waitUntil, walletState,
@@ -16,7 +17,8 @@ const apis: ApiInstance[] = [], workers: Child[] = [], publishers: Child[] = [],
 const q = (sql: string, args: unknown[] = []) => orm.em.fork().getConnection().execute<Record<string, any>[]>(sql, args);
 const pgArray = (values: readonly string[]) => `{${values.join(',')}}`;
 const proof = (name: string, data: Record<string, unknown>) => console.log(JSON.stringify({ proof: name, ...data }));
-const children = () => [...apis.map(api => api.child), ...workers, ...publishers, ...schedulers];
+const strictApis: ApiInstance[] = [];
+const children = () => [...apis.map(api => api.child), ...workers, ...publishers, ...schedulers, ...strictApis.map(api => api.child)];
 
 beforeAll(async () => {
   const { ownerUrl } = requiredInfrastructure();
@@ -38,7 +40,7 @@ beforeAll(async () => {
   commands = await isolatedPair(client, 'wager-transactions.fifo');
   events = await isolatedPair(client, 'wager-events.fifo');
   const worker = (name: string, script: string, queueUrl?: string) => Child.spawn(name, ['bun', `tests/concurrency/multi-process/${script}`],
-    { JWP_WORKER_DATABASE_URL: runtimeUrl, ...(queueUrl ? { JWP_WORKER_QUEUE_URL: queueUrl } : {}) });
+    { JWP_WORKER_DATABASE_URL: runtimeUrl, ...(queueUrl ? { JWP_WORKER_QUEUE_URL: queueUrl } : {}), JWP_REVERSAL_POLICY: '' });
   apis.push(...await Promise.all([1, 2, 3].map(i => startApi(`api-${i}`, runtimeUrl))));
   workers.push(...[1, 2, 3].map(i => worker(`sqs-worker-${i}`, 'wager-worker.ts', commands.url)));
   publishers.push(...[1, 2].map(i => worker(`publisher-${i}`, 'publisher-worker.ts', events.url)));
@@ -52,7 +54,8 @@ afterAll(async () => {
   client?.destroy();
   if (!orm) return;
   try {
-    if (migrated) await orm.migrator.down({ to: 0 });
+    // per_type deixa REFUND e ROLLBACK aplicados à mesma BET; o down recusa e o banco descartável é esvaziado.
+    if (migrated) await downToZeroAfterReversals(orm, true);
     await q(`DROP ROLE IF EXISTS ${role}`);
   } finally {
     await orm.close(true);
@@ -196,6 +199,53 @@ test('REFUND/ROLLBACK delivered before the BET are applied once by three concurr
     reversals: 10, processedByScheduler: Object.fromEntries(countBy(processed.map(o => o['pid'] as number))),
     rescheduledBySchedulerPid: Object.fromEntries(countBy(outcomesFor('RESCHEDULED').map(o => o['pid'] as number))),
     lostLease: outcomesFor('LOST_LEASE').length, reconciliation,
+  });
+}, 90_000);
+
+test('reversal policy across processes: per_type applies one REFUND and one ROLLBACK (HTTP race and three schedulers); per_reference applies one', async () => {
+  const kindsFor = async (bet: string) => (await q(`SELECT t.kind FROM wager_transactions t JOIN wager_transactions b ON b.id=t.reference_transaction_id
+    WHERE b.external_transaction_id=? AND t.status='PROCESSED' ORDER BY t.kind`, [bet])).map(r => r['kind']);
+  // per_type (padrão) nas três APIs: 6 reversões de tipos misturados em corrida.
+  const a = await openWallet(apis[0]!);
+  const betA = wager(a, 'BET', '25.00');
+  await submit(apis[1]!, betA);
+  const raceA = await Promise.all(Array.from({ length: 6 }, (_, i) =>
+    submit(apis[i % 3]!, wager(a, i % 2 ? 'ROLLBACK' : 'REFUND', '25.00', betA.body.externalTransactionId))));
+  expect(raceA.filter(r => r.status === 200)).toHaveLength(2);
+  expect(raceA.filter(r => r.body.failureCode === 'ALREADY_REVERSED')).toHaveLength(4);
+  expect(await walletState(orm, a.id)).toMatchObject({ balance: '125.00', ledger: 4, debits: 1 });
+  expect(await kindsFor(betA.body.externalTransactionId)).toEqual(['REFUND', 'ROLLBACK']);
+
+  // per_type com REFUND e ROLLBACK pendentes da mesma BET resolvidos pelos três schedulers.
+  const p = await openWallet(apis[0]!);
+  const betP = wager(p, 'BET', '25.00');
+  const pending = await Promise.all(['REFUND', 'ROLLBACK', 'REFUND', 'ROLLBACK'].map((kind, i) =>
+    submit(apis[i % 3]!, wager(p, kind, '25.00', betP.body.externalTransactionId))));
+  expect(pending.map(r => r.status)).toEqual([202, 202, 202, 202]);
+  expect((await submit(apis[2]!, betP)).status).toBe(200);
+  const ids = pending.map(r => r.body.transactionId as string);
+  const settled = await waitUntil(async () => {
+    const rows = await q(`SELECT status, failure_code FROM wager_transactions WHERE id = ANY(?::uuid[])`, [pgArray(ids)]);
+    return rows.every(r => r['status'] !== 'PENDING_REFERENCE') ? rows : undefined;
+  }, 'schedulers to settle pending reversals', 45_000);
+  expect(settled.filter(r => r['status'] === 'PROCESSED')).toHaveLength(2);
+  expect(settled.filter(r => r['failure_code'] === 'ALREADY_REVERSED')).toHaveLength(2);
+  expect(await walletState(orm, p.id)).toMatchObject({ balance: '125.00', ledger: 4, debits: 1 });
+  expect(await kindsFor(betP.body.externalTransactionId)).toEqual(['REFUND', 'ROLLBACK']);
+
+  // per_reference em três APIs próprias: a mesma corrida aplica exatamente uma reversão.
+  strictApis.push(...await Promise.all([1, 2, 3].map(i => startApi(`api-per-reference-${i}`, runtimeUrl, 'per_reference'))));
+  const r = await openWallet(strictApis[0]!);
+  const betR = wager(r, 'BET', '25.00');
+  await submit(strictApis[1]!, betR);
+  const raceR = await Promise.all(Array.from({ length: 6 }, (_, i) =>
+    submit(strictApis[i % 3]!, wager(r, i % 2 ? 'ROLLBACK' : 'REFUND', '25.00', betR.body.externalTransactionId))));
+  expect(raceR.filter(x => x.status === 200)).toHaveLength(1);
+  expect(raceR.filter(x => x.body.failureCode === 'ALREADY_REVERSED')).toHaveLength(5);
+  expect(await walletState(orm, r.id)).toMatchObject({ balance: '100.00', ledger: 3, debits: 1 });
+  expect(await kindsFor(betR.body.externalTransactionId)).toHaveLength(1);
+  proof('reversal-policy-multi-process', {
+    perTypeHttpRace: { racers: 6, applied: 2 }, perTypeSchedulers: { pending: 4, applied: 2 }, perReferenceHttpRace: { racers: 6, applied: 1 },
   });
 }, 90_000);
 

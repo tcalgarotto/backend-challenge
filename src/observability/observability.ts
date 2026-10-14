@@ -3,6 +3,7 @@ import type { MikroORM } from '@mikro-orm/postgresql';
 import type { ReconciliationMonitor, ReconciliationResult } from '../wallet/application/reconcile-wallet.js';
 import { runSqlTransaction, sqlQuery, sqlTransactionPolicy, type SqlTransactionPolicy } from '../shared/infrastructure/sql-transaction.js';
 import { JsonLogger } from './log.js';
+import { sqlFailureReason } from './messaging.js';
 import { MetricsRegistry } from './metrics.js';
 import { PostgresProbe, ReadinessService, SqsProbe, type DependencyProbe, type Dependency } from './readiness.js';
 
@@ -19,6 +20,7 @@ export function jwpMetrics(registry: MetricsRegistry) {
     eventMessages: registry.counter('jwp_event_messages_total', 'Integration event messages by disposition and error code', ['disposition', 'error_code']),
     queueMessages: registry.gauge('jwp_sqs_queue_messages', 'Approximate messages per configured queue (DLQs included), by state', ['queue', 'state']),
     sqlTransient: registry.counter('jwp_sql_transient_failures_total', 'Transient SQL failures that exhausted retries, by channel and reason', ['channel', 'reason']),
+    lockConflicts: registry.counter('jwp_lock_conflicts_total', 'SQL statements aborted by lock contention (lock_timeout, deadlock, serialization), every attempt including retried ones', ['reason']),
     lockWaiters: registry.gauge('jwp_postgres_lock_waiters', 'PostgreSQL backends currently waiting for a lock'),
     outboxPending: registry.gauge('jwp_outbox_pending_events', 'Outbox events not yet published'),
     outboxOldestAge: registry.gauge('jwp_outbox_oldest_pending_age_seconds', 'Age of the oldest unpublished outbox event (0 when empty)'),
@@ -78,6 +80,7 @@ export class Observability {
     if (options.orm) {
       probes.push(new PostgresProbe(options.orm));
       this.registry.addCollector('postgres', () => this.samplePostgres(options.orm!));
+      observeLockConflicts(options.orm, this.metrics);
     }
     if (options.sqs && options.sqs.queues.length > 0) {
       probes.push(new SqsProbe(options.sqs.client, options.sqs.queues.map(queue => queue.url)));
@@ -114,6 +117,24 @@ export class Observability {
   }
 }
 
+
+const LOCK_REASONS = new Set(['lock_timeout', 'deadlock', 'serialization']);
+/** Uma escuta por ORM; cada comando abortado por disputa de lock soma, mesmo que o retry depois tenha sucesso. */
+const observedOrms = new WeakMap<object, JwpMetrics[]>();
+export function observeLockConflicts(orm: MikroORM, metrics: JwpMetrics): void {
+  const knex = orm.em.getConnection().getKnex() as unknown as { on(event: 'query-error', listener: (error: unknown) => void): unknown };
+  let targets = observedOrms.get(knex);
+  if (!targets) {
+    targets = [];
+    observedOrms.set(knex, targets);
+    const list = targets;
+    knex.on('query-error', error => {
+      const reason = sqlFailureReason(error);
+      if (reason && LOCK_REASONS.has(reason)) for (const target of list) target.lockConflicts.inc({ reason });
+    });
+  }
+  if (!targets.includes(metrics)) targets.push(metrics);
+}
 
 export function observedQueue(url: string): ObservedQueue {
   const name = new URL(url).pathname.split('/').filter(Boolean).at(-1);

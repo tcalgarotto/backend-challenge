@@ -1,10 +1,13 @@
 
+import { configureReversalPolicy } from '../../../src/wagering/domain/reversal-policy.js';
 import { openFinancialOrm } from '../../../src/persistence/financial-orm.js';
 import { SqlPendingReferenceScheduler } from '../../../src/messaging/pending-reference-scheduler.js';
 
 const databaseUrl = process.env['JWP_WORKER_DATABASE_URL'];
 if (!databaseUrl) throw new Error('Scheduler requires JWP_WORKER_DATABASE_URL.');
 
+// Mesma validação de boot do servidor: política inválida encerra o worker sem ecoar o valor.
+configureReversalPolicy(process.env);
 const log = (line: Record<string, unknown>) => console.log(JSON.stringify({ ...line, pid: process.pid }));
 const orm = await openFinancialOrm(databaseUrl);
 const scheduler = new SqlPendingReferenceScheduler(orm, { baseBackoffMs: 100, maxBackoffMs: 400 });

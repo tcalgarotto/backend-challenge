@@ -1,8 +1,8 @@
 import { Controller, Get, Inject, Optional, Res, type INestApplication } from '@nestjs/common';
 import { Observability } from './observability.js';
-import { wagerKind } from './messaging.js';
+import { sqlFailureReason, wagerKind } from './messaging.js';
 import { PublicRoute } from '../shared/http/provider-identity.js';
-import { assignedCorrelationId } from '../shared/http/typed-response.js';
+import { assignedCorrelationId, recordedInfrastructureFailure } from '../shared/http/typed-response.js';
 
 export const OBSERVABILITY = Symbol('JwpObservability');
 
@@ -96,11 +96,14 @@ export function httpObservability(observability: Observability) {
         metrics.processing.observe({ channel: 'http', outcome: 'completed' }, seconds);
         if (replay) metrics.duplicates.inc({ layer: 'idempotency' });
       }
+      // Mesma série do canal SQS: falha SQL transitória que esgotou os retries e virou 503.
+      const sqlReason = response.statusCode === 503 ? sqlFailureReason(recordedInfrastructureFailure(response)) : undefined;
+      if (sqlReason) metrics.sqlTransient.inc({ channel: 'http', reason: sqlReason });
       const level = response.statusCode >= 500 ? 'error' : response.statusCode >= 400 ? 'warn' : 'info';
       logger.log(level, 'http.request', {
         method, route, httpStatus: response.statusCode, durationMs: Math.round(seconds * 1000),
         correlationId: assignedCorrelationId(response) ?? string(body?.['correlationId']), errorCode: string(error?.['code']),
-        transactionId: string(body?.['transactionId']), status, kind, failureCode: string(body?.['failureCode']), idempotentReplay: replay,
+        transactionId: string(body?.['transactionId']), status, kind, reason: sqlReason, failureCode: string(body?.['failureCode']), idempotentReplay: replay,
         walletId: string(request.params?.['walletId']) ?? string(requestBody?.['walletId'])
           ?? (route === '/wallets' && method === 'POST' ? string(body?.['id']) : undefined),
         providerId: string(request.params?.['providerId']) ?? string(requestBody?.['providerId']),

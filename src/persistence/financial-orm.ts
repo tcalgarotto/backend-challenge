@@ -8,6 +8,7 @@ import { Migration202610120005 } from './migrations/Migration202610120005.js';
 import { Migration202610120006 } from './migrations/Migration202610120006.js';
 import { Migration202610120007 } from './migrations/Migration202610120007.js';
 import { Migration202610130009 } from './migrations/Migration202610130009.js';
+import { Migration202610140010 } from './migrations/Migration202610140010.js';
 import { Migration202610120008 } from './migrations/Migration202610120008.js';
 import { observePostgresConnection } from './postgres-connection-failure.js';
 
@@ -55,7 +56,7 @@ export const walletRecordRow = (wallet: WalletRecord) => ({
 // que é NOLOGIN e não possui tabelas.
 export async function openFinancialOrm(clientUrl: string) {
   return MikroORM.init({ clientUrl, entities: [WalletRecordSchema, WagerTransactionLockSchema], extensions: [Migrator],
-    migrations: { migrationsList: [Migration202610110002, Migration202610110003, Migration202610110004, Migration202610120005, Migration202610120006, Migration202610120007, Migration202610120008, Migration202610130009], tableName: 'jwp_financial_migrations',
+    migrations: { migrationsList: [Migration202610110002, Migration202610110003, Migration202610110004, Migration202610120005, Migration202610120006, Migration202610120007, Migration202610120008, Migration202610130009, Migration202610140010], tableName: 'jwp_financial_migrations',
       transactional: true, allOrNothing: true, snapshot: false },
     pool: { min: 0, max: 4, acquireTimeoutMillis: 5000, afterCreate: observePostgresConnection },
   });

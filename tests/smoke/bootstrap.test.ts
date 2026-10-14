@@ -10,6 +10,17 @@ test('compiled server refuses missing database configuration', async () => {
   expect(await new Response(child.stdout).text()).not.toContain('listening');
 });
 
+test('compiled server refuses an invalid JWP_REVERSAL_POLICY before touching infrastructure, without echoing it', async () => {
+  const raw = 'Per_Reference-n0t-valid';
+  const env = { ...Bun.env, JWP_DATABASE_URL: 'postgres://smoke:smoke@127.0.0.1:1/smoke', APP_ROLES: 'http', JWP_REVERSAL_POLICY: raw };
+  const child = Bun.spawn(['bun', 'dist/main.js'], { cwd, env, stdout: 'pipe', stderr: 'pipe' });
+  const [code, error, output] = await Promise.all([child.exited, new Response(child.stderr).text(), new Response(child.stdout).text()]);
+  expect(code).not.toBe(0);
+  expect(error).toContain('INVALID_REVERSAL_POLICY');
+  expect(error + output).not.toContain(raw);
+  expect(output).not.toContain('listening');
+});
+
 test('compiled health module boots Nest DI and answers real HTTP independently of infrastructure', async () => {
   const child = Bun.spawn(['bun', '-e', `import 'reflect-metadata';import {NestFactory} from '@nestjs/core';
     import {AppModule} from './dist/app.module.js';const app=await NestFactory.create(AppModule,{logger:false});

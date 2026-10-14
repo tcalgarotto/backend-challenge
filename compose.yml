@@ -67,6 +67,8 @@ services:
       PORT: "3037"
       JWP_DATABASE_URL: postgresql://jwp_api:jwp_api_local@postgres:5432/jwp
       JWP_WORKER_INTERVAL_MS: ${JWP_WORKER_INTERVAL_MS:-250}
+      # Política de reversão repassada a todas as réplicas; vazio ou ausente = per_type (padrão), valor inválido falha no boot.
+      JWP_REVERSAL_POLICY: ${JWP_REVERSAL_POLICY:-}
     deploy:
       replicas: ${JWP_APP_REPLICAS:-3}
     ports:

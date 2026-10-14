@@ -1,3 +1,5 @@
+import { appliedReversalKinds } from '../wagering/infrastructure/sql-reversal-guard.js';
+import { reversalPolicy } from '../wagering/domain/reversal-policy.js';
 import { WalletRecord, walletRecordRow, WagerTransactionLockRecord } from '../persistence/financial-orm.js';
 import { isKnownPermanentWagerFailure, permanentWagerDiagnostic } from '../shared/infrastructure/permanent-wager-failure.js';
 import { randomUUID } from 'node:crypto';
@@ -233,15 +235,9 @@ export class SqlPendingReferenceScheduler {
           [transaction.providerId, transaction.referenceExternalTransactionId],
         );
         const reference = referenceRow ? rehydrate(referenceRow) : undefined;
-        // Uma reversão aplicada por referência, independente do tipo (Migration202610110004).
-        const reversed = reference && transaction.requiresReference()
-          ? (await sqlQuery(
-              em,
-              `SELECT id FROM wager_transactions
-                WHERE reference_transaction_id=? AND kind IN ('REFUND','ROLLBACK') AND status='PROCESSED'`,
-              [reference.id],
-            )).length > 0
-          : false;
+        // Reversões já aplicadas à referência; a política (JWP_REVERSAL_POLICY) decide a colisão (JWP-ADR-005).
+        const policy = reversalPolicy();
+        const applied = reference && transaction.requiresReference() ? await appliedReversalKinds(em, reference.id, policy) : [];
         const schedulerNow = currentTime();
         if (date(job['lease_until']) <= schedulerNow) return { status: 'LOST_LEASE', transactionId: claim.transactionId };
         // O lease usa o relógio do worker; a transição financeira não pode anteceder
@@ -250,7 +246,7 @@ export class SqlPendingReferenceScheduler {
           schedulerNow.getTime(), transaction.createdAt.getTime(), transaction.pendingReferenceAt?.getTime() ?? -Infinity,
         ));
         if(diagnostic) ProcessWager.recordFailure(transaction);
-        const movement = diagnostic ? undefined : ProcessWager.applyToWallet(transaction, wallet, reference, reversed, checkedAt, date(job['expires_at']));
+        const movement = diagnostic ? undefined : ProcessWager.applyToWallet(transaction, wallet, reference, applied, checkedAt, date(job['expires_at']), policy);
         if (transaction.status === WagerTransactionStatus.PendingReference) {
           const nextAttemptAt = this.nextAttempt(checkedAt, Number(job['attempts']), date(job['expires_at']));
           const updated = await sqlQuery(

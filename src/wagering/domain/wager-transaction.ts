@@ -1,3 +1,4 @@
+import { reversalBlocked, reversalPolicy, type ReversalPolicy } from './reversal-policy.js';
 import { LedgerDirection } from '../../wallet/domain/wallet-ledger-entry.js';
 import { Money } from '../../shared/domain/money.js';
 import { rejectionCodes, WagerError, InvalidTransactionStateError, type RejectionCode, type FailureCode } from './wager-error.js';
@@ -248,7 +249,12 @@ export class WagerTransaction {
     return this.payloadHash === hash;
   }
 
-  referenceDecision(reference?: WagerTransaction, alreadyReversed = false): ReferenceDecision {
+  /**
+   * `appliedReversals` são os tipos de reversão já PROCESSED contra a mesma referência, lidos sob o lock da wallet.
+   * A política decide a colisão: per_type rejeita só o mesmo tipo; per_reference rejeita qualquer segunda reversão.
+   */
+  referenceDecision(reference?: WagerTransaction, appliedReversals: readonly WagerTransactionKind[] = [],
+    policy: ReversalPolicy = reversalPolicy()): ReferenceDecision {
     if (this.referenceExternalTransactionId === undefined) {
       if (reference) return { status: 'REJECT', code: 'REFERENCE_CONTEXT_MISMATCH' };
       return { status: 'READY' };
@@ -278,7 +284,7 @@ export class WagerTransaction {
         : { status: 'WAIT' };
     if (this.requiresReference() && !this.money.equals(reference.money))
       return { status: 'REJECT', code: 'REVERSAL_AMOUNT_MISMATCH' };
-    if (this.requiresReference() && alreadyReversed) return { status: 'REJECT', code: 'ALREADY_REVERSED' };
+    if (this.requiresReference() && reversalBlocked(policy, this.kind, appliedReversals)) return { status: 'REJECT', code: 'ALREADY_REVERSED' };
     return { status: 'READY' };
   }
   ledgerDirectionFor(reference?: WagerTransaction): LedgerDirection | undefined {

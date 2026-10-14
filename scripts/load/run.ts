@@ -67,8 +67,21 @@ async function mapLimit<T, R>(items: readonly T[], limit: number, work: (item: T
   return results;
 }
 
-const cents = (value: number) => `${Math.floor(value / 100)}.${String(value % 100).padStart(2, '0')}`;
-const randomAmount = () => cents(100 + Math.floor(Math.random() * 900));
+/** Formata centavos inteiros (bigint) em decimal com 2 casas; valor monetário nunca passa por number. */
+const cents = (value: bigint): string => {
+  if (value < 0n) throw new RangeError('NEGATIVE_AMOUNT');
+  return `${value / 100n}.${(value % 100n).toString().padStart(2, '0')}`;
+};
+/** Sorteio entre 1.00 e 9.99: o índice aleatório é inteiro e vira bigint antes de qualquer conta monetária. */
+/** Valor fixo de cada aposta do cenário hot-drain. */
+const HOT_DRAIN_BET = '1.00';
+const randomAmount = () => cents(100n + BigInt(Math.floor(Math.random() * 900)));
+/** Converte "100.00" em centavos bigint sem ponto flutuante; recusa formato fora de dígitos com 2 casas. */
+const parseCents = (value: string): bigint => {
+  const match = /^(\d+)\.(\d{2})$/.exec(value);
+  if (!match) throw new RangeError(`INVALID_AMOUNT:${value}`);
+  return BigInt(match[1]!) * 100n + BigInt(match[2]!);
+};
 const randomKind = () => (Math.random() < 0.7 ? 'BET' : 'WIN');
 
 
@@ -327,7 +340,7 @@ async function scrapeMetrics(bases: string[]): Promise<Map<string, number>> {
   }
   return total;
 }
-const COUNTERS = ['jwp_retries_total', 'jwp_sql_transient_failures_total', 'jwp_duplicates_total', 'jwp_wager_transactions_total',
+const COUNTERS = ['jwp_retries_total', 'jwp_sql_transient_failures_total', 'jwp_lock_conflicts_total', 'jwp_duplicates_total', 'jwp_wager_transactions_total',
   'jwp_outbox_publications_total', 'jwp_sqs_messages_total', 'jwp_http_requests_total'];
 function counterDelta(before: Map<string, number>, after: Map<string, number>) {
   const delta: Record<string, number> = {};
@@ -567,7 +580,11 @@ async function invariants(ctx: Ctx, wallets: Wallet[], hotDrain: Wallet) {
   const queues = { commandsDlq: await depth(QUEUES.commandsDlq), eventsDlq: await depth(QUEUES.eventsDlq),
     commands: await depth(QUEUES.commands), events: await depth(QUEUES.events) };
   sqs.destroy();
-  const expectedDrainBets = Math.round(Number(cfg.hotDrainBalance));
+  // Saldo e aposta em centavos bigint: a contagem esperada é divisão inteira exata, sem number.
+  const drainBalanceCents = parseCents(cfg.hotDrainBalance);
+  const drainBetCents = parseCents(HOT_DRAIN_BET);
+  if (drainBalanceCents % drainBetCents !== 0n) throw new RangeError('HOT_DRAIN_BALANCE_NOT_DIVISIBLE');
+  const expectedDrainBets = drainBalanceCents / drainBetCents;
   const checks = {
     balanceEqualsLedgerSum: balances.balance_ne_ledger_sum === 0,
     balanceEqualsLastLedgerEntry: lastEntry.n === 0,
@@ -580,12 +597,12 @@ async function invariants(ctx: Ctx, wallets: Wallet[], hotDrain: Wallet) {
     noNonTerminalLeft: ledgerShape.non_terminal === 0,
     outboxFullyPublished: ledgerShape.outbox_unpublished === 0,
     reconciliationEndpointConsistent: reconciliation.every(Boolean),
-    hotDrainExactlyBalance: drain.balance === '0.00' && drain.processed_bets === expectedDrainBets,
+    hotDrainExactlyBalance: drain.balance === '0.00' && BigInt(drain.processed_bets) === expectedDrainBets,
     noDeadLetters: queues.commandsDlq === 0 && queues.eventsDlq === 0,
     commandQueueDrained: queues.commands === 0,
   };
   return { checks, passed: Object.values(checks).every(Boolean), balances, lastEntryMismatch: lastEntry.n, ledger: ledgerShape,
-    hotDrain: { ...drain, expectedProcessedBets: expectedDrainBets }, reconciliation: { called: reconciliation.length,
+    hotDrain: { ...drain, expectedProcessedBets: expectedDrainBets.toString() }, reconciliation: { called: reconciliation.length,
       consistent: reconciliation.filter(Boolean).length }, queues };
 }
 
@@ -685,7 +702,7 @@ async function main(): Promise<number> {
     const http = [
       await httpScenario('distributed', ctx, cfg.concurrency, mixedPick(() => distributed[Math.floor(Math.random() * distributed.length)]!), { durationMs: cfg.durationS * 1000 }),
       await httpScenario('hot-wallet', ctx, cfg.concurrency, mixedPick(() => hot), { durationMs: cfg.durationS * 1000 }),
-      await httpScenario('hot-drain', ctx, cfg.concurrency, () => ({ wallet: hotDrain, kind: 'BET', amount: '1.00' }), { total: cfg.hotDrainBets }),
+      await httpScenario('hot-drain', ctx, cfg.concurrency, () => ({ wallet: hotDrain, kind: 'BET', amount: HOT_DRAIN_BET }), { total: cfg.hotDrainBets }),
     ];
     const sqs = cfg.sqsMessages > 0 ? await sqsScenario(ctx, sqsWallets) : null;
     say('invariants: balance == ledger, reconciliation endpoint, DLQs');

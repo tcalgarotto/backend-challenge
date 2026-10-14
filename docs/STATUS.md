@@ -12,7 +12,7 @@ Atualização: 14/10/2026. Este documento descreve o que funciona hoje, como exe
 | Wallet, ledger e reconciliação | Ledger auditável; saldo = soma do ledger; consultas de wallet e transação |
 | Concorrência | Lock por wallet com `LockMode.PESSIMISTIC_WRITE` (MikroORM, `SELECT ... FOR UPDATE`); wallets distintas processam em paralelo |
 | Idempotência | Persistente por `provider_id`/`Idempotency-Key`; replay devolve o snapshot terminal |
-| Reversão | No máximo uma reversão PROCESSED por referência (REFUND+ROLLBACK somados); segunda vira `ALREADY_REVERSED`/422 |
+| Reversão | Padrão `per_type`: um REFUND e um ROLLBACK PROCESSED por referência (o stake volta duas vezes); repetir o tipo vira `ALREADY_REVERSED`/422. Opcional `JWP_REVERSAL_POLICY=per_reference`: uma reversão por referência |
 | Mensageria | Inbox de comandos, outbox de eventos (at-least-once), scheduler de referências pendentes, retry/backoff e DLQ |
 | Múltiplas instâncias | N réplicas `http,workers` no mesmo banco e filas; ack só após commit; lease/fencing nos workers |
 | Recuperação | Kill após commit e antes do ack resulta em redelivery sem duplicar efeito |
@@ -47,7 +47,7 @@ Metodologia, resultados e ressalvas em [LOAD_TEST.md](LOAD_TEST.md). Medição l
 ## Regras de negócio relevantes
 
 - LOSS exige `"0.00"` na moeda da wallet e nenhuma referência ([HTTP.md](HTTP.md)).
-- Reversão única por referência; ROLLBACK de REFUND é permitido, ROLLBACK de ROLLBACK não ([ARCHITECTURE.md](../ARCHITECTURE.md), JWP-ADR-005).
+- Política de reversão `JWP_REVERSAL_POLICY`: padrão `per_type` (um REFUND e um ROLLBACK por referência; REFUND+ROLLBACK da mesma BET devolvem o stake duas vezes) ou `per_reference` (uma reversão por referência); ROLLBACK de REFUND é permitido, ROLLBACK de ROLLBACK não ([ADR-005](../ARCHITECTURE.md#jwp-adr-005--referências-estados-e-política-de-reversão)).
 
 ## Pacote de entrega
 

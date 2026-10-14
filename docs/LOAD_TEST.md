@@ -1,10 +1,10 @@
 # Teste de carga (`bun run test:load`)
 
-Experimento de carga contra PostgreSQL e SQS (LocalStack) reais, com N réplicas do serviço completo. A execução de referência abaixo publica os resultados desta versão; as demais medições são históricas e mantêm seus limites originais. Não há meta de RPS nem SLA de produção. Novas execuções podem ser feitas com `bun run test:load`.
+Experimento de carga contra PostgreSQL e SQS (LocalStack) reais, com N réplicas do serviço completo. Todas as medições publicadas aqui são históricas: a execução de referência de 13/10/2026 antecede a multimoeda, a política de reversão configurável e as métricas de contenção. A versão final é medida pelo roteiro em [Execução da versão final](#execução-da-versão-final). Não há meta de RPS nem SLA de produção. Novas execuções podem ser feitas com `bun run test:load`.
 
-## Execução de referência
+## Execução de referência (histórica, 13/10/2026)
 
-Execução concluída em 2026-10-13T19:41:57.802879-03:00 (BRT), com sourceCommit `8175cfebdb87a002417a28f4d2779a458fb58caf`, já usando LockMode.PESSIMISTIC_WRITE. O produto exportado é idêntico aos 142 arquivos protegidos da entrega pública 42d3083. Evidências versionadas: [README do ambiente e gates](evidence/README.md), [resumo da carga](evidence/load/summary.json) e [results.json medido e sanitizado](evidence/load/results.json).
+Execução concluída em 2026-10-13T19:41:57-03:00 (BRT), sobre o código da época, já com LockMode.PESSIMISTIC_WRITE e anterior à multimoeda. O commit medido não faz parte do histórico publicado deste repositório; por isso os números ficam como histórico e não são atribuídos a esta versão. Resumos versionados: [ambiente e comandos](evidence/README.md), [resumo da carga](evidence/load/summary.json) e [results.json sanitizado](evidence/load/results.json).
 
 Configuração padrão: 3 HTTP + 3 workers, 32 VUs, 20 s por cenário, aquecimento de 5 s, 200 wallets, 500 apostas hot-drain e 1000 comandos SQS. Host compartilhado, PostgreSQL 17.6 e LocalStack 4.9.2 reais; uma rodada, sem SLA.
 
@@ -16,7 +16,17 @@ Configuração padrão: 3 HTTP + 3 workers, 32 VUs, 20 s por cenário, aquecimen
 
 Exit code 0; 17/17 invariantes verdadeiras, incluindo saldo = ledger. Downstream: 42703/42703 eventIds distintos, 0 duplicados e 0 faltantes. Todos os 6 processos encerrados com exit 0. Os máximos amostrados incluem espera de lock e são diferentes de falhas SQL que esgotaram retries. Configuração, outcomes, percentis, série amostrada e métricas completas estão no JSON.
 
-As medições abaixo são históricas, inclusive a canary curta. Não representam uma nova execução do commit acima e não devem ser usadas como benchmark da versão de referência. Seus artefatos antigos não acompanham este pacote; a evidência pública conferível desta entrega é a execução acima.
+As medições abaixo são históricas, inclusive a canary curta. Não representam uma nova execução e não devem ser usadas como benchmark desta versão. Seus artefatos antigos não acompanham este pacote; a evidência pública conferível desta entrega é a execução acima.
+
+## Execução da versão final
+
+A versão final é medida depois do último commit de produto, com a árvore limpa, nas duas políticas de reversão:
+
+```bash
+bash scripts/load/final-candidate.sh "$HOME/.cache/jwp-load-final"
+```
+
+O roteiro ([scripts/load/final-candidate.sh](../scripts/load/final-candidate.sh)) recusa mudanças de produto fora do HEAD, roda `bun run test:load` com `JWP_REVERSAL_POLICY=per_type` e depois com `per_reference`, e grava `results.json`/`summary.md` de cada política e o commit medido em `run.json`. O resultado inclui o delta de `jwp_lock_conflicts_total`, que conta cada aborto por disputa de lock (também os absorvidos por retry), ao lado de `jwp_sql_transient_failures_total` e do máximo amostrado de `pg_locks` não concedidos.
 
 ## Como executar
 
@@ -251,7 +261,7 @@ As réplicas encerraram com exit 0 após SIGTERM. Os únicos warnings de log for
 
 **Pergunta:** onde a vazão para de subir e o que satura, com HTTP e workers em processos separados (`LOAD_WORKERS` = réplicas), PostgreSQL e LocalStack reais. Sem meta de RPS; uma execução por ponto.
 
-**Configuração:** 8, 32 e 64 VUs × 1 e 3 réplicas HTTP (com 1 e 3 processos de workers); 10 s por cenário HTTP, aquecimento de 2 s, 30 wallets no `distributed`, 150 BETs no `hot-drain` e 100 comandos SQS em 10 wallets (mesmos parâmetros da validação do mix completo). Mix HTTP completo: BET, WIN, LOSS 0.00, REFUND e ROLLBACK. Execução sequencial às 15:10–15:21 (UTC−3), no mesmo host descrito em "Ambiente", com os containers de outros trabalhos parados antes do início (load average de 1 min = 1,21 na primeira rodada). Código do produto: V4, sem mudanças locais em `src/` nem no script de carga durante a sequência. A varredura é anterior à mudança de LockMode de 13/10/2026 e não foi repetida depois dela. A evidência atual do código com LockMode é a [execução de referência](#execução-de-referência) (configuração padrão, 17/17 invariantes, 42703/42703 eventos; [docs/evidence](evidence/README.md)). A canary curta no fim deste documento é histórica.
+**Configuração:** 8, 32 e 64 VUs × 1 e 3 réplicas HTTP (com 1 e 3 processos de workers); 10 s por cenário HTTP, aquecimento de 2 s, 30 wallets no `distributed`, 150 BETs no `hot-drain` e 100 comandos SQS em 10 wallets (mesmos parâmetros da validação do mix completo). Mix HTTP completo: BET, WIN, LOSS 0.00, REFUND e ROLLBACK. Execução sequencial às 15:10–15:21 (UTC−3), no mesmo host descrito em "Ambiente", com os containers de outros trabalhos parados antes do início (load average de 1 min = 1,21 na primeira rodada). Código do produto: V4, sem mudanças locais em `src/` nem no script de carga durante a sequência. A varredura é anterior à mudança de LockMode de 13/10/2026 e não foi repetida depois dela. A evidência atual do código com LockMode é a [execução de referência](#execução-de-referência-histórica-13102026) (configuração padrão, 17/17 invariantes, 42703/42703 eventos; [docs/evidence](evidence/README.md)). A canary curta no fim deste documento é histórica.
 
 | HTTP + workers | VUs | distributed req/s | p50 / p95 / p99 ms | hot-wallet req/s | p50 / p95 / p99 ms | ms/tx na hot wallet (≈1/vazão) | máx. sessões esperando lock (hot) | erros | retries + falhas SQL transitórias | gates | downstream: recebidos/esperados, dup, faltando |
 |---|---:|---:|---|---:|---|---:|---:|---:|---:|---|---|
@@ -378,7 +388,7 @@ A versão compilada dessas medições de isolamento não foi preservada com arte
 
 ## Canary histórica de correção (13/10/2026)
 
-Histórica: foi substituída como evidência do código com LockMode pela [execução de referência](#execução-de-referência), publicada em [docs/evidence](evidence/README.md) (3 HTTP + 3 workers, 32 VUs, 20 s por cenário; 17/17 invariantes; downstream 42703/42703 eventIds, 0 duplicados e 0 faltantes). Os números abaixo ficam só como registro.
+Histórica: foi substituída como evidência do código com LockMode pela [execução de referência](#execução-de-referência-histórica-13102026), publicada em [docs/evidence](evidence/README.md) (3 HTTP + 3 workers, 32 VUs, 20 s por cenário; 17/17 invariantes; downstream 42703/42703 eventIds, 0 duplicados e 0 faltantes). Os números abaixo ficam só como registro.
 
 Depois da mudança de LockMode e antes da execução de referência, o gate final rodou `bun run test:load` sobre o pacote de entrega, com 3 HTTP + 3 workers, 4 VUs, 8 wallets, 3 s por cenário HTTP, aquecimento de 1 s, 500 BETs no hot-drain e 20 comandos SQS em 4 wallets. **É uma canary de correção, não benchmark nem SLA:** a janela de 3 s e os 4 VUs servem para exercitar o código final sob concorrência real, não para medir capacidade. Os req/s abaixo não se comparam às tabelas anteriores nem as substituem.
 

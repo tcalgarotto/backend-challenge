@@ -6,6 +6,14 @@ export interface TypedHttpError { readonly code: string; readonly httpStatus: nu
 export interface HttpResult { readonly httpStatus: number; readonly body: unknown }
 
 const CORRELATION_ID = 'jwpCorrelationId';
+const INFRASTRUCTURE_FAILURE = 'jwpInfrastructureFailure';
+/** Guarda a causa do 503 para a observabilidade classificar o SQLSTATE; nunca vai para a resposta. */
+export function recordInfrastructureFailure(response: { locals?: Record<string, unknown> }, error: unknown): void {
+  if (response.locals) response.locals[INFRASTRUCTURE_FAILURE] = error;
+}
+export function recordedInfrastructureFailure(response: { locals?: Record<string, unknown> }): unknown {
+  return response.locals?.[INFRASTRUCTURE_FAILURE];
+}
 /** Um correlationId compartilhado liga caso de uso, eventos, erro e log da mesma requisição. */
 export function requestCorrelationId(response: { locals?: Record<string, unknown> }): string {
   const current = response.locals?.[CORRELATION_ID];
@@ -30,6 +38,7 @@ export async function respond(response: HttpResponse, run: (correlationId: strin
     const known = typed(error) ?? (error instanceof InfrastructureUnavailableError || isTransientInfrastructureFailure(error)
       ? { code: 'INFRASTRUCTURE_UNAVAILABLE', httpStatus: 503 } : undefined);
     if (!known) throw error;
+    if (known.code === 'INFRASTRUCTURE_UNAVAILABLE') recordInfrastructureFailure(response, error);
     response.status(known.httpStatus).json({ error: { code: known.code, message: known.code,
       retryable: known.code === 'INFRASTRUCTURE_UNAVAILABLE' }, correlationId });
     return;

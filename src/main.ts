@@ -4,6 +4,7 @@ import type { INestApplication } from '@nestjs/common';
 import { ApplicationWorkers } from './runtime/workers.js';
 import { loadEnvironment } from './config/env.js';
 import { configureCurrencies } from './shared/domain/currency.js';
+import { configureReversalPolicy } from './wagering/domain/reversal-policy.js';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
 import { openFinancialOrm } from './persistence/financial-orm.js';
@@ -15,6 +16,8 @@ import { LocalProviderIdentity, assertLocalIdentityAllowed } from './shared/http
 const config = loadEnvironment(process.env);
 // Registro e allowlist de moedas são validados antes de qualquer dependência externa.
 configureCurrencies(process.env);
+// Política de reversão validada no boot; valor inválido encerra sem ecoar o conteúdo (JWP-ADR-005).
+configureReversalPolicy(process.env);
 // Sem adapter de IdP no repositório, o boot usa identidade local; em produção exige opt-in explícito.
 const identity = new LocalProviderIdentity();
 assertLocalIdentityAllowed(process.env, identity);

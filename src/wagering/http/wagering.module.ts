@@ -5,7 +5,7 @@ import { ProcessWager, ProcessWagerError } from '../application/process-wager.js
 import { SqlProcessWagerStore } from '../infrastructure/sql-process-wager-store.js';
 import { TransactionQueries, TransactionQueryError } from '../application/transaction-queries.js';
 import { SqlTransactionQueryStore } from '../infrastructure/sql-transaction-query-store.js';
-import { requestCorrelationId, respond, type HttpResponse } from '../../shared/http/typed-response.js';
+import { recordInfrastructureFailure, requestCorrelationId, respond, type HttpResponse } from '../../shared/http/typed-response.js';
 
 const typedQuery = (error: unknown) => error instanceof TransactionQueryError ? error : undefined;
 @Controller('wagering/transactions')
@@ -24,6 +24,7 @@ export class WageringController {
       response.status(result.httpStatus).json(result.body);
     } catch(error) {
       if (!(error instanceof ProcessWagerError)) throw error;
+      if (error.code === 'INFRASTRUCTURE_UNAVAILABLE') recordInfrastructureFailure(response, error);
       response.status(error.httpStatus).json({error:{code:error.code,message:error.code,
         retryable:error.code === 'INFRASTRUCTURE_UNAVAILABLE'},correlationId});
     }

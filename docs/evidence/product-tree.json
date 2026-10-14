@@ -1,6 +1,6 @@
 {
-  "publicCommit": "42d3083f1c56f3cbbe21f6e4775869ed28dd5edd",
-  "sourceCommit": "8175cfebdb87a002417a28f4d2779a458fb58caf",
+  "publicCommit": "historical-pre-multicurrency",
+  "sourceCommit": "historical-pre-multicurrency",
   "productFileCount": 142,
   "identical": true,
   "changedPaths": [],

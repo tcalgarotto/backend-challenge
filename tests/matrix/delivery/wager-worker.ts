@@ -1,5 +1,6 @@
 
 
+import { configureReversalPolicy } from '../../../src/wagering/domain/reversal-policy.js';
 import { openFinancialOrm } from '../../../src/persistence/financial-orm.js';
 import { ProcessInboxWager, SqlInboxProcessWagerStore } from '../../../src/messaging/sql-inbox-process-wager-store.js';
 import { SqsWagerConsumer } from '../../../src/messaging/sqs-wager-consumer.js';
@@ -10,6 +11,8 @@ const queueUrl = process.env['JWP_WORKER_QUEUE_URL'];
 const endpoint = process.env['JWP_WORKER_SQS_ENDPOINT'];
 if (!databaseUrl || !queueUrl || !endpoint) throw new Error('Wager worker requires JWP_WORKER_DATABASE_URL, JWP_WORKER_QUEUE_URL and JWP_WORKER_SQS_ENDPOINT.');
 
+// Mesma validação de boot do servidor: política inválida encerra o worker sem ecoar o valor.
+configureReversalPolicy(process.env);
 const log = (line: Record<string, unknown>) => console.log(JSON.stringify({ ...line, pid: process.pid }));
 const orm = await openFinancialOrm(databaseUrl);
 const client = sqsClient(endpoint);

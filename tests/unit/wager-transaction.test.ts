@@ -203,7 +203,7 @@ test('self-reference and one reversal per type use explicit decisions; rejected 
   });
   const b = bet(),
     r = reversal(b);
-  expect(r.referenceDecision(b, true)).toEqual({
+  expect(r.referenceDecision(b, [K.Refund])).toEqual({
     status: 'REJECT',
     code: 'ALREADY_REVERSED',
   });
@@ -212,7 +212,7 @@ test('self-reference and one reversal per type use explicit decisions; rejected 
   const refund = reversal(b);
   refund.markProcessed(b, at);
   const rollback = reversal(b, K.Rollback);
-  expect(rollback.referenceDecision(b, false)).toEqual({ status: 'READY' });
+  expect(rollback.referenceDecision(b, [])).toEqual({ status: 'READY' });
   rollback.markProcessed(b, at);
   expect(b.status).toBe(S.Processed);
   expect(refund.status).toBe(S.Processed);
@@ -376,4 +376,26 @@ test('terminal transition failures use InvalidTransactionStateError with the exi
     try {transition();throw new Error('transition unexpectedly succeeded');}
     catch(error){expect(error).toBeInstanceOf(InvalidTransactionStateError);expect(error).toMatchObject({code:'INVALID_TRANSACTION_STATE'});}
   }
+});
+
+test('reversal policy per_type (default): one REFUND and one ROLLBACK per reference; same type twice is ALREADY_REVERSED', () => {
+  const b = bet();
+  expect(reversal(b, K.Refund).referenceDecision(b, [], 'per_type')).toEqual({ status: 'READY' });
+  expect(reversal(b, K.Rollback).referenceDecision(b, [K.Refund], 'per_type')).toEqual({ status: 'READY' });
+  expect(reversal(b, K.Refund).referenceDecision(b, [K.Rollback], 'per_type')).toEqual({ status: 'READY' });
+  expect(reversal(b, K.Refund).referenceDecision(b, [K.Refund], 'per_type')).toEqual({ status: 'REJECT', code: 'ALREADY_REVERSED' });
+  expect(reversal(b, K.Rollback).referenceDecision(b, [K.Refund, K.Rollback], 'per_type'))
+    .toEqual({ status: 'REJECT', code: 'ALREADY_REVERSED' });
+  // Sem política explícita vale a configurada no processo, cujo padrão é per_type.
+  expect(reversal(b, K.Rollback).referenceDecision(b, [K.Refund])).toEqual({ status: 'READY' });
+});
+
+test('reversal policy per_reference: any second reversal of the same reference is ALREADY_REVERSED', () => {
+  const b = bet();
+  expect(reversal(b, K.Refund).referenceDecision(b, [], 'per_reference')).toEqual({ status: 'READY' });
+  for (const [kind, applied] of [[K.Rollback, [K.Refund]], [K.Refund, [K.Rollback]], [K.Refund, [K.Refund]]] as const)
+    expect(reversal(b, kind).referenceDecision(b, applied, 'per_reference')).toEqual({ status: 'REJECT', code: 'ALREADY_REVERSED' });
+  // Valor e contexto continuam verificados antes da colisão, nas duas políticas.
+  expect(reversal(b, K.Refund, { money: money('10.00') }).referenceDecision(b, [K.Rollback], 'per_reference'))
+    .toEqual({ status: 'REJECT', code: 'REVERSAL_AMOUNT_MISMATCH' });
 });

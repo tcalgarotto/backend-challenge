@@ -84,8 +84,9 @@ export class Child {
 
 export interface ApiInstance { readonly child: Child; readonly base: string }
 
-export async function startApi(name: string, runtimeUrl: string): Promise<ApiInstance> {
-  const child = Child.spawn(name, ['bun', 'src/main.ts'], { JWP_DATABASE_URL: runtimeUrl, PORT: '0', HOST: '127.0.0.1' });
+/** `reversalPolicy` vazio equivale a ausente (padrão per_type), mesmo que o shell exporte outra política. */
+export async function startApi(name: string, runtimeUrl: string, reversalPolicy = ''): Promise<ApiInstance> {
+  const child = Child.spawn(name, ['bun', 'src/main.ts'], { JWP_DATABASE_URL: runtimeUrl, PORT: '0', HOST: '127.0.0.1', JWP_REVERSAL_POLICY: reversalPolicy });
   const listening = await child.waitFor(line => line['type'] === 'listening', 'listening');
   return { child, base: `http://127.0.0.1:${String(listening['port'])}` };
 }

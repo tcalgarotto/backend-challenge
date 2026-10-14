@@ -28,7 +28,7 @@ Wallet, ledger, inbox e outbox usam PostgreSQL para confirmar o efeito financeir
 SQS é acessado depois do commit; a entrega pode repetir e exige deduplicação persistente.\
 `ApplicationWorkers.start` inicia consumer, publisher e scheduler; o consumo downstream de eventos é uma responsabilidade separada.
 
-Fontes: [src/wagering/http/wagering.module.ts:20](src/wagering/http/wagering.module.ts#L20), [src/wagering/application/process-wager.ts:88](src/wagering/application/process-wager.ts#L88), [src/runtime/workers.ts:35](src/runtime/workers.ts#L35).
+Fontes: [src/wagering/http/wagering.module.ts:20](src/wagering/http/wagering.module.ts#L20), [src/wagering/application/process-wager.ts:89](src/wagering/application/process-wager.ts#L89), [src/runtime/workers.ts:35](src/runtime/workers.ts#L35).
 
 Adapters dependem da aplicação; a aplicação depende do domínio e de portas; a infraestrutura implementa as portas. Classes de domínio não têm decorators de framework nem de ORM. `WagerApplicationService` concentra decisões, snapshots e eventos para HTTP, SQS e scheduler; `WalletLedgerEntry`, `InboxMessage` e `OutboxMessage` participam das escritas reais.
 
@@ -108,13 +108,13 @@ Estrutura: `src/wallet/{domain,application,http,infrastructure}`, `src/wagering/
 
 **Prova.** `tests/matrix/delivery/matrix.test.ts` (50 envios paralelos, conflito, caixa de UUID), `tests/unit/process-wager.test.ts`.
 
-## JWP-ADR-005 — Referências, estados e reversão única
+## JWP-ADR-005 — Referências, estados e política de reversão
 
-**Decisão.** Persistir referências fora de ordem para resolução pelo scheduler; aplicar no máximo uma reversão por transação referenciada; confirmar LOSS sem efeito monetário.
+**Decisão.** Persistir referências fora de ordem para resolução pelo scheduler; aplicar a política de reversão configurada (padrão `per_type`: um REFUND e um ROLLBACK por referência; opcional `per_reference`: uma reversão por referência); confirmar LOSS sem efeito monetário.
 
-**Motivo.** A ordem de chegada entre canais não é garantida. REFUND e ROLLBACK concorrentes da mesma BET não podem creditar o stake duas vezes.
+**Motivo.** A ordem de chegada entre canais não é garantida. O enunciado proíbe repetir o mesmo tipo de reversão; quem não aceitar o crédito duplo do stake pode escolher a política mais restritiva.
 
-**Consequências.** Pendências exigem jobs, backoff, lease e prazo finito. A regra de reversão é mais restritiva que a redação por tipo do enunciado; o cliente recebe uma rejeição auditável quando a vaga já foi consumida.
+**Consequências.** Pendências exigem jobs, backoff, lease e prazo finito. No padrão `per_type`, REFUND e ROLLBACK da mesma BET são ambos aplicados e o stake volta duas vezes; `per_reference` impede isso. Nas duas, o cliente recebe uma rejeição auditável (`ALREADY_REVERSED`) quando a vaga já foi consumida.
 
 **Estados.** PENDING → PROCESSED, REJECTED, FAILED ou PENDING_REFERENCE; PENDING_REFERENCE → PROCESSED, REJECTED ou FAILED. Enquanto aguarda, só reagenda; o evento de pendência é emitido uma vez. Estados terminais são imutáveis; tentativa de transição lança `InvalidTransactionStateError extends WagerError`, conservando `INVALID_TRANSACTION_STATE`.
 
@@ -124,19 +124,25 @@ Estrutura: `src/wallet/{domain,application,http,infrastructure}`, `src/wagering/
 
 **Relógio.** No scheduler, o timestamp da transição é `max(relógio do worker, createdAt, pendingReferenceAt)`, para nunca anteceder a aceitação quando há diferença de relógio entre hosts. O lease continua validado só pelo relógio do worker e não é estendido.
 
-**Reversão única por referência.**
-- *Requisito do enunciado* ([docs/CHALLENGE.md §7](docs/CHALLENGE.md#7-regras-de-negócio)): a tabela diz que REFUND "reverte uma `BET` `PROCESSED`, uma única vez" e que ROLLBACK "reverte uma transação `PROCESSED`, uma única vez". A regra 4 diz: "uma referência não pode ser revertida duas vezes pelo mesmo tipo de operação". O enunciado pede que interpretações adicionais sejam documentadas.
-- *Interpretação.* Uma transação referenciada é revertida no máximo uma vez, qualquer que seja o tipo. A regra adotada contém a regra 4 e é mais restritiva: REFUND e ROLLBACK da mesma BET também não coexistem.
-- *Motivo.* Os dois creditariam o mesmo stake. Exemplo: 100,00 → BET 25,00 → REFUND → 100,00; um ROLLBACK da mesma BET levaria a 125,00, um crédito duplicado que viola a correção financeira. A leitura literal "por tipo" permitiria esse caso.
-- *Comportamento.* A primeira reversão PROCESSED vence; a segunda vira REJECTED/`ALREADY_REVERSED` (422, persistida com evento). ROLLBACK de um REFUND continua permitido, pois referencia o próprio REFUND. ROLLBACK de ROLLBACK é proibido. WIN que referencia a BET não é reversão.
+**Política de reversão configurável (`JWP_REVERSAL_POLICY`).**
+- *Requisito do enunciado* ([docs/CHALLENGE.md §7](docs/CHALLENGE.md#7-regras-de-negócio)): a tabela diz que REFUND "reverte uma `BET` `PROCESSED`, uma única vez" e que ROLLBACK "reverte uma transação `PROCESSED`, uma única vez". A regra 4 diz: "uma referência não pode ser revertida duas vezes pelo mesmo tipo de operação".
+- *Padrão: `per_type`, conforme o enunciado.* Cada referência aceita um REFUND e um ROLLBACK; o segundo do mesmo tipo vira REJECTED/`ALREADY_REVERSED` (422, persistido com evento). Consequência documentada: REFUND e ROLLBACK da mesma BET são ambos aplicados e o stake é creditado duas vezes. Exemplo: 100,00 → BET 25,00 → 75,00 → REFUND → 100,00 → ROLLBACK da BET → 125,00.
+- *Opção: `per_reference`, mais restritiva.* Uma única reversão por referência, de qualquer tipo; a primeira PROCESSED vence e a segunda vira `ALREADY_REVERSED`. Benefício: impede devolver o stake duas vezes quando o provedor envia REFUND e ROLLBACK para a mesma BET (no exemplo, o saldo para em 100,00). Fica pronta para uso: basta `JWP_REVERSAL_POLICY=per_reference` no ambiente e reiniciar as réplicas, sem mudança de código nem migration.
+- *Regras comuns.* Valor sempre integral (`REVERSAL_AMOUNT_MISMATCH` caso contrário). ROLLBACK de um REFUND é permitido nas duas políticas, pois referencia o próprio REFUND; ROLLBACK de ROLLBACK é proibido; WIN que referencia a BET não é reversão. LOSS continua `0.00`, sem referência. Replay idempotente devolve o snapshot persistido, mesmo após troca de política.
+- *Validação no boot.* Ausente ou vazia = `per_type`. Qualquer outro valor que não `per_type` ou `per_reference` encerra o processo com `ReversalPolicyConfigError`/`INVALID_REVERSAL_POLICY`, informando só o tamanho do valor, nunca o conteúdo (mesmo padrão de `JWP_ENABLED_CURRENCIES`). Todas as réplicas devem usar a mesma política.
+- *Concorrência.* Duas reversões da mesma referência pertencem à mesma wallet; a decisão lê os tipos já aplicados sob o lock pessimista da wallet, então duas reversões de tipos diferentes em corrida são serializadas. Com `per_reference`, apenas uma é aplicada; com `per_type`, uma de cada tipo.
+- *Garantia no banco* ([Migration202610140010](src/persistence/migrations/Migration202610140010.ts), reversível, sem editar migrations anteriores):
+  - `per_type`: índice único parcial `wager_one_reversal(reference_transaction_id, kind) WHERE status='PROCESSED' AND kind IN ('REFUND','ROLLBACK')`, sempre ativo.
+  - `per_reference`: a transação publica `jwp.reversal_policy` com `set_config(..., true)` e o gatilho `jwp_reversal_policy_guard` recusa (23505) uma segunda reversão PROCESSED da mesma referência, com advisory lock por referência para serializar escritas concorrentes mesmo fora do lock da wallet.
+  - O down restaura o índice por referência da Migration202610110004 e recusa com `REVERSAL_POLICY_DOWN_BLOCKED` se já houver mais de uma reversão aplicada à mesma referência, sem apagar dados.
 - *Código.*
-  - Domínio: `WagerTransaction.referenceDecision` em [wager-transaction.ts](src/wagering/domain/wager-transaction.ts) (`alreadyReversed` → `ALREADY_REVERSED`).
-  - Consultas sob o lock da wallet em [sql-process-wager-store.ts](src/wagering/infrastructure/sql-process-wager-store.ts) (HTTP/SQS) e em [pending-reference-scheduler.ts](src/messaging/pending-reference-scheduler.ts).
-  - Barreira final: índice único parcial `wager_one_reversal(reference_transaction_id) WHERE status='PROCESSED' AND kind IN ('REFUND','ROLLBACK')`, sem `kind`, em [Migration202610110004](src/persistence/migrations/Migration202610110004.ts) (ADR-003).
+  - Política e validação: [reversal-policy.ts](src/wagering/domain/reversal-policy.ts) (`configureReversalPolicy`, chamada em [main.ts](src/main.ts) antes do ORM).
+  - Domínio: `WagerTransaction.referenceDecision` em [wager-transaction.ts](src/wagering/domain/wager-transaction.ts) (`reversalBlocked` → `ALREADY_REVERSED`).
+  - Leitura sob lock e publicação da política na TX: `appliedReversalKinds` em [sql-reversal-guard.ts](src/wagering/infrastructure/sql-reversal-guard.ts), usada por [sql-process-wager-store.ts](src/wagering/infrastructure/sql-process-wager-store.ts) (HTTP/SQS) e [pending-reference-scheduler.ts](src/messaging/pending-reference-scheduler.ts).
 - *Prova.*
-  - M08 em `tests/matrix/delivery/matrix.test.ts` (`M08 reversal addendum: one applied reversal per referenced transaction, any kind; ROLLBACK of REFUND allowed`): REFUND seguido de ROLLBACK resulta em 422 `ALREADY_REVERSED`, a ordem inversa também, e seis reversões concorrentes entre instâncias resultam em uma aplicada.
-  - A preparação da matriz confere a definição do índice sem `kind`.
-  - `tests/unit/wager-transaction.test.ts` (`self-reference and one reversal per type use explicit decisions; rejected identity is terminal`).
+  - M08 em `tests/matrix/delivery/matrix.test.ts`: `M08 reversal policy per_type (default): ...` (REFUND e ROLLBACK da mesma BET aplicados, saldo 125,00; mesmo tipo duas vezes 422; corrida HTTP de tipos misturados e SQS com duas aplicadas) e `M08 reversal policy per_reference (JWP_REVERSAL_POLICY): ...` (422 `ALREADY_REVERSED` em qualquer ordem; corridas HTTP e SQS com uma aplicada).
+  - `tests/concurrency/multi-process/multi-process.test.ts` (`reversal policy across processes: ...`), `tests/integration/wager/process-wager.test.ts`, `tests/integration/messaging/scheduler/audit-regressions.test.ts`, `tests/integration/schema/financial-schema.test.ts` e `tests/integration/schema/messaging-migrations.test.ts` (up/down/up e down recusado).
+  - `tests/unit/reversal-policy.test.ts`, `tests/unit/wager-transaction.test.ts` e o smoke `compiled server refuses an invalid JWP_REVERSAL_POLICY ...`.
 
 **LOSS.**
 - *Requisito do enunciado* ([docs/CHALLENGE.md §7](docs/CHALLENGE.md#7-regras-de-negócio)): LOSS tem efeito "nenhum" no saldo, ledger "nenhuma" e "registra o resultado sem mover saldo". Operações sem efeito no saldo "não geram lançamento". `WagerTransactionProcessed` vale para "qualquer transação aplicada, inclusive `LOSS`". As regras 1 e 3 só exigem e definem referência para REFUND/ROLLBACK; na tabela, só WIN "pode referenciar a `BET`".
@@ -213,7 +219,7 @@ Fontes: [visibilidade SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/lat
 
 **Consequências.** O 400 atual informa o código, mas não o campo inválido: `message` repete o código. Mantemos esse contrato; detalhes estruturados de campo/caminho ficam para uma evolução consistente entre endpoints. O cliente deve validar o payload e decidir pelo código, sem interpretar `message`.
 
-**Observabilidade.** `/metrics` expõe séries agregadas: transações por status e kind, duplicatas por camada, retries, profundidade de filas e DLQs, espera de lock, outbox pendente e idade do mais antigo, latência HTTP e de processamento, divergências de reconciliação. Logs JSON carregam correlationId e identificadores de contexto, sem saldo, payload ou segredo; IDs não viram labels de métrica. O `correlationId` vem de `response.locals`, é o mesmo passado ao use case e gravado nos eventos, e não aparece nas respostas de sucesso.
+**Observabilidade.** `/metrics` expõe séries agregadas: transações por status e kind, duplicatas por camada, retries, profundidade de filas e DLQs, espera de lock (contador acumulado e gauge do scrape), falhas SQL transitórias nos canais HTTP e SQS, outbox pendente e idade do mais antigo, latência HTTP e de processamento, divergências de reconciliação. Logs JSON carregam correlationId e identificadores de contexto, sem saldo, payload ou segredo; IDs não viram labels de métrica. O `correlationId` vem de `response.locals`, é o mesmo passado ao use case e gravado nos eventos, e não aparece nas respostas de sucesso.
 
 **Health e identidade HTTP.** Live mede processo; ready exige PostgreSQL e SQS em qualquer papel HTTP. Sem SQS configurado ou alcançável, responde503 unavailable, conservando as checks para diagnóstico. Health fica público. A chave de idempotência é opaca, não vazia após trim e limitada a128 unidades UTF-16 sem NUL/substitutos isolados; formato inválido continua400 IDEMPOTENCY_KEY_REQUIRED. O padrão recomendado é providerId:externalTransactionId, sem exigir prefixo nem recompor o header. Contrato e testes de validação estão em docs/HTTP.md e process-wager.test.ts.
 
@@ -263,7 +269,7 @@ Fontes: [transações MikroORM](https://mikro-orm.io/docs/transactions), [locks 
 
 **Decisão.** O schema é definido só pelas migrations MikroORM com SQL escrito à mão (`src/persistence/migrations/`, Migration202610110002–Migration202610130009). Não usamos `schema:update` nem migrations geradas a partir das entidades. As duas entidades (`WalletRecordSchema`, `WagerTransactionLockSchema`, ADR-014) servem a leituras e locks e são conferidas contra o banco migrado por um teste automático de drift.
 
-**Motivo.** O gerador de diff do ORM não expressa o que o schema financeiro precisa: índices únicos parciais (`wager_one_reversal` em `reference_transaction_id` só para REFUND/ROLLBACK PROCESSED; `outbox_ready`, `outbox_wallet_pending`, `pending_reference_ready`), CHECKs entre colunas, constraint triggers DEFERRABLE, triggers de imutabilidade, funções PL/pgSQL, grants da role `jwp_runtime` e backfills. Os claims `FOR UPDATE SKIP LOCKED` do outbox e do scheduler dependem desses índices parciais para não varrer linhas publicadas. Gerado contra as entidades atuais, o diff do ORM propõe apagar tabelas de mensageria, colunas de `wager_transactions`, CHECKs e índices parciais, e trocar `text` por `varchar(255)`. Aplicá-lo seria destrutivo.
+**Motivo.** O gerador de diff do ORM não expressa o que o schema financeiro precisa: índices únicos parciais (`wager_one_reversal` em `(reference_transaction_id, kind)` só para REFUND/ROLLBACK PROCESSED; `outbox_ready`, `outbox_wallet_pending`, `pending_reference_ready`), CHECKs entre colunas, constraint triggers DEFERRABLE, triggers de imutabilidade, funções PL/pgSQL, grants da role `jwp_runtime` e backfills. Os claims `FOR UPDATE SKIP LOCKED` do outbox e do scheduler dependem desses índices parciais para não varrer linhas publicadas. Gerado contra as entidades atuais, o diff do ORM propõe apagar tabelas de mensageria, colunas de `wager_transactions`, CHECKs e índices parciais, e trocar `text` por `varchar(255)`. Aplicá-lo seria destrutivo.
 
 **Locks e CONCURRENTLY.** As migrations rodam com `transactional: true` e `allOrNothing: true`: uma falha desfaz o lote inteiro. `CREATE INDEX CONCURRENTLY` não roda dentro de transação, então os índices usam `CREATE INDEX` comum, que bloqueia escritas na tabela durante a construção. Na entrega isso é aceitável, porque as tabelas nascem vazias ou pequenas. Em produção com volume, um índice novo deve entrar numa migration própria, não transacional, com `CONCURRENTLY`, `lock_timeout` curto e verificação de índice `INVALID` após falha. Essa migration ficaria fora da garantia de tudo ou nada.
 
@@ -312,7 +318,7 @@ A matriz sobe processos reais (APIs, workers, publishers e schedulers). `Child.s
 
 ### Retomada dos dependentes de PENDING_REFERENCE
 
-O trigger `jwp_schedule_pending_reference` cria o job na mesma transação da pendência, com primeira tentativa após um segundo. `ApplicationWorkers.start` mantém o loop de `SqlPendingReferenceScheduler.runOnce`, que busca os jobs vencidos; cada tentativa reconsulta a referência por provedor/identidade externa sob lock da wallet. A referência que chegou entre duas tentativas será observada na próxima consulta: não existe notificação imediata ou despertador por evento SQS. O custo é polling e atraso de até o próximo backoff, limitado ao vencimento. Prova: [src/persistence/migrations/Migration202610120005.ts:46](src/persistence/migrations/Migration202610120005.ts#L46), [src/messaging/pending-reference-scheduler.ts:127](src/messaging/pending-reference-scheduler.ts#L127) e `tests/integration/messaging/pending-reference-scheduler.test.ts`, teste `two workers claim once, persist backoff, then a restarted worker resolves the out-of-order reference exactly once`.
+O trigger `jwp_schedule_pending_reference` cria o job na mesma transação da pendência, com primeira tentativa após um segundo. `ApplicationWorkers.start` mantém o loop de `SqlPendingReferenceScheduler.runOnce`, que busca os jobs vencidos; cada tentativa reconsulta a referência por provedor/identidade externa sob lock da wallet. A referência que chegou entre duas tentativas será observada na próxima consulta: não existe notificação imediata ou despertador por evento SQS. O custo é polling e atraso de até o próximo backoff, limitado ao vencimento. Prova: [src/persistence/migrations/Migration202610120005.ts:46](src/persistence/migrations/Migration202610120005.ts#L46), [src/messaging/pending-reference-scheduler.ts:129](src/messaging/pending-reference-scheduler.ts#L129) e `tests/integration/messaging/pending-reference-scheduler.test.ts`, teste `two workers claim once, persist backoff, then a restarted worker resolves the out-of-order reference exactly once`.
 
 ### Configuração de boot e limites do logger
 
@@ -365,7 +371,7 @@ O lock antecede a leitura da identidade e a decisão do saldo, serializando os e
 A ordem de escrita real é wager, wallet/ledger quando há movimento, depois outbox; todos são confirmados juntos.\
 Replay não cria efeito adicional; payload diferente retorna 409, e só depois do commit há resposta de sucesso.
 
-Fontes: [src/wagering/http/wagering.module.ts:20](src/wagering/http/wagering.module.ts#L20), [src/wagering/application/process-wager.ts:48](src/wagering/application/process-wager.ts#L48), [src/wagering/application/process-wager.ts:153](src/wagering/application/process-wager.ts#L153), [src/wagering/infrastructure/sql-process-wager-store.ts:60](src/wagering/infrastructure/sql-process-wager-store.ts#L60), [src/wagering/infrastructure/sql-process-wager-store.ts:117](src/wagering/infrastructure/sql-process-wager-store.ts#L117). O caminho HTTP usa `EntityManager.transactional` diretamente; `runSqlTransaction` é usado pelo adapter de inbox e pela auditoria de falha permanente, não pelo caminho HTTP normal.
+Fontes: [src/wagering/http/wagering.module.ts:20](src/wagering/http/wagering.module.ts#L20), [src/wagering/application/process-wager.ts:49](src/wagering/application/process-wager.ts#L49), [src/wagering/application/process-wager.ts:155](src/wagering/application/process-wager.ts#L155), [src/wagering/infrastructure/sql-process-wager-store.ts:62](src/wagering/infrastructure/sql-process-wager-store.ts#L62), [src/wagering/infrastructure/sql-process-wager-store.ts:119](src/wagering/infrastructure/sql-process-wager-store.ts#L119). O caminho HTTP usa `EntityManager.transactional` diretamente; `runSqlTransaction` é usado pelo adapter de inbox e pela auditoria de falha permanente, não pelo caminho HTTP normal.
 
 ### Publisher da outbox
 
@@ -484,7 +490,7 @@ O backoff parte de 1 s, dobra com jitter e tem teto de 60 s, sem ultrapassar o v
 No limite do TTL, a referência é reconsultada sob lock antes da rejeição; uma referência já aplicável pode vencer essa corrida.\
 REFERENCE_EXPIRED é terminal, não reabre; concorrência entre reversões é revalidada sob o mesmo lock da wallet.
 
-Fontes: [src/persistence/migrations/Migration202610120005.ts:46](src/persistence/migrations/Migration202610120005.ts#L46), [src/messaging/pending-reference-scheduler.ts:127](src/messaging/pending-reference-scheduler.ts#L127), [src/messaging/pending-reference-scheduler.ts:174](src/messaging/pending-reference-scheduler.ts#L174), [src/messaging/pending-reference-scheduler.ts:298](src/messaging/pending-reference-scheduler.ts#L298), [src/wagering/application/process-wager.ts:88](src/wagering/application/process-wager.ts#L88). Referência inválida/terminal pode rejeitar antes do TTL; o desenho mostra o caso de ausência e chegada fora de ordem.
+Fontes: [src/persistence/migrations/Migration202610120005.ts:46](src/persistence/migrations/Migration202610120005.ts#L46), [src/messaging/pending-reference-scheduler.ts:129](src/messaging/pending-reference-scheduler.ts#L129), [src/messaging/pending-reference-scheduler.ts:176](src/messaging/pending-reference-scheduler.ts#L176), [src/messaging/pending-reference-scheduler.ts:294](src/messaging/pending-reference-scheduler.ts#L294), [src/wagering/application/process-wager.ts:89](src/wagering/application/process-wager.ts#L89). Referência inválida/terminal pode rejeitar antes do TTL; o desenho mostra o caso de ausência e chegada fora de ordem.
 
 ### Estados da transação
 
@@ -509,7 +515,7 @@ Reagendamento altera o job, não cria uma nova transição nem repete o evento d
 Estados terminais são imutáveis; replay devolve o snapshot e não reaplica a transição.\
 FAILED exige diagnóstico permanente conhecido e auditoria; indisponibilidade transitória fica em retry.
 
-Fontes: [src/wagering/domain/wager-transaction.ts:298](src/wagering/domain/wager-transaction.ts#L298), [src/wagering/application/process-wager.ts:90](src/wagering/application/process-wager.ts#L90), [src/messaging/pending-reference-scheduler.ts:285](src/messaging/pending-reference-scheduler.ts#L285).
+Fontes: [src/wagering/domain/wager-transaction.ts:304](src/wagering/domain/wager-transaction.ts#L304), [src/wagering/application/process-wager.ts:91](src/wagering/application/process-wager.ts#L91), [src/messaging/pending-reference-scheduler.ts:281](src/messaging/pending-reference-scheduler.ts#L281).
 
 ## Desvios do esqueleto do enunciado
 
@@ -520,7 +526,7 @@ Fontes: [src/wagering/domain/wager-transaction.ts:298](src/wagering/domain/wager
 | WalletBalanceChanged.from(wallet,entry,ctx) | Factory recebe transaction e WalletMovement, com referência quando necessária | Verifica estado terminal, direção, valor e contexto antes de serializar MoneyProps | `integration-events.test.ts`; `wallet-balance-changed.ts` | Mais parâmetros e validação de contexto |
 | rehydrate reconstrói sem transições | Restaura campos diretamente e mantém checagens estruturais de corrupção | Não repete saldo/versão/processedAt; registro inválido não passa silenciosamente | `domain-records.test.ts` (spies de create/markProcessed); `wallet.test.ts`; `wager-transaction.test.ts` | Checagem de integridade separada da criação |
 | LOSS não move saldo | LOSS aceita 0.00 sem referência a BET, como interpretação do contrato aceito | Registra resultado sem ledger, incremento de versão ou BalanceChanged | `integration-events.test.ts`; matriz M07/M10 | Política de entrada mais restritiva que o texto do enunciado |
-| Uma referência não pode ser revertida duas vezes pelo mesmo tipo | Uma reversão aplicada por referência, somando REFUND e ROLLBACK | Evita dois créditos do mesmo stake | `process-wager.test.ts`; matriz M08; índice wager_one_reversal | Rejeita combinação de tipos que a frase isolada poderia permitir |
+| Uma referência não pode ser revertida duas vezes pelo mesmo tipo | Padrão `per_type`: um REFUND e um ROLLBACK por referência; `JWP_REVERSAL_POLICY=per_reference` aceita uma só | Segue a regra literal; a opção restritiva evita devolver o stake duas vezes | `process-wager.test.ts`; matriz M08 nas duas políticas; índice wager_one_reversal e gatilho jwp_reversal_policy_guard | No padrão, REFUND+ROLLBACK da mesma BET devolvem o stake duas vezes |
 | Readiness consulta PG e SQS | Toda rota ready exige ambos; HTTP sem SQS configurado responde 503 unavailable | Um processo vivo sem mensageria disponível não anuncia o contrato completo pronto | `workers-entrypoint.test.ts` (HTTP-only sem SQS); `readiness.test.ts` (SQS real retirado/restaurado) | Operador HTTP isolado precisa configurar fila de probe para ready200 |
 | Money exemplificado com Decimal | bigint em centavos, numeric(20,2) e string decimal nas fronteiras | Soma/subtração exatas sem conversão monetária por number | `money.test.ts`; `financial-schema.test.ts` (>2^53) | Duas casas e operações aritméticas limitadas ao domínio atual |
 
@@ -536,7 +542,7 @@ Wallet possui currency readonly, createdAt e updatedAt defensivos. A migration 0
 | Duplicatas | jwp_duplicates_total |
 | Retries | jwp_retries_total |
 | Mensagens em DLQ | jwp_sqs_queue_messages (queue DLQ) |
-| Conflitos/espera de lock | jwp_sql_transient_failures_total; jwp_postgres_lock_waiters |
+| Conflitos/espera de lock | `jwp_lock_conflicts_total` (monotônico: cada `lock_timeout`/`deadlock`/`serialization` abortado, incluindo retries que depois passam); `jwp_sql_transient_failures_total` (SQS e HTTP, quando os retries esgotam); `jwp_postgres_lock_waiters` (gauge do scrape) |
 | Outbox lag | jwp_outbox_oldest_pending_age_seconds |
 | Latência de processamento | jwp_wager_processing_duration_seconds |
 
