@@ -21,5 +21,12 @@
       "verdict": "FAIL"
     }
   ],
-  "failureClassification": "M14 timeout and cleanup-hook timeout; cause not established. No product or test changed for the second complete run."
+  "failureClassification": "M14 timeout and cleanup-hook timeout; cause not established. No product or test changed for the second complete run.",
+  "followUp": {
+    "workItem": "item",
+    "identifiedCause": "Unbounded wait for the stdout/stderr pipe drain in the matrix helper Child.stop() after the worker processes had already exited; afterAll called the non-idempotent stop() again and waited on the same drain, so its cleanup never ran. Deduced from Bun reporting 3 dangling processes at the M14 timeout (the 3 API processes; the 7 workers had exited). The original hang was not reproduced synthetically.",
+    "fix": "Test harness only: idempotent stop(), 5 s bounded drain logging a child-drain-timeout proof line, Promise.allSettled cleanup in afterAll, 20 s AbortSignal timeout on matrix HTTP calls, deterministic tests/matrix/delivery/child-stop.test.ts. No product change, no test timeout increased.",
+    "verification": "Matrix 20/20 exit 0 and full reproduction 3/3 exit 0 (80 steps, 399 pass, 0 fail) after the fix.",
+    "details": "docs/evidence/README.md#causa-da-falha-de-m14-na-1ª-tentativa"
+  }
 }

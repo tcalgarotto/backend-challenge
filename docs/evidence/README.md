@@ -30,9 +30,28 @@ Resultados medidos em 2026-10-13T19:32:29.548025-03:00 até 2026-10-13T19:41:57.
 | bun run test:compose | 18/18 checks; 3 réplicas e limpeza concluída | 0 | [compose/summary.json](compose/summary.json) |
 | bun run test:load | 17/17 invariantes; todos os processos encerrados com 0 | 0 | [load/summary.json](load/summary.json), [load/results.json](load/results.json) |
 
-A primeira tentativa integral não passou: 80 etapas, 397 testes positivos, 2 falhas e 4015 asserções, exit 1. M14 e seu hook de limpeza excederam timeout. A causa não foi estabelecida; o produto e os testes não foram alterados antes da segunda reprodução. Preservamos [o resumo dessa tentativa](integration/attempt-1-summary.json). A tabela acima apresenta a segunda reprodução integral, sem omitir a primeira.
+A primeira tentativa integral não passou: 80 etapas, 397 testes positivos, 2 falhas e 4015 asserções, exit 1. M14 e seu hook de limpeza excederam timeout. A causa não foi estabelecida; o produto e os testes não foram alterados antes da segunda reprodução. Preservamos [o resumo dessa tentativa](integration/attempt-1-summary.json). A tabela acima apresenta a segunda reprodução integral, sem omitir a primeira. A causa foi identificada depois, no 058 (seção abaixo). O resumo da 1ª tentativa ganhou o campo `followUp` e mantém a classificação original.
 
 As contagens da reprodução somam testes e asserções dos passos cuja expectativa é sucesso. As tentativas sem infraestrutura precisam falhar e têm seus exits/verdicts registrados separadamente. Não são falhas inesperadas nem testes omitidos.
+
+## Causa da falha de M14 na 1ª tentativa
+
+Identificada depois desta execução, no 058. A correção alterou só o harness de testes, não o produto.
+
+- **Causa.** No helper `Child.stop()` da matriz, depois do exit do processo, a espera pelo fim dos pipes stdout/stderr não tinha prazo. O guarda SIGTERM→SIGKILL de 20 s não cobria essa espera. Na 1ª tentativa, o Bun informou "killed 3 dangling processes" no timeout de M14. O Bun 1.3.14 conta todos os subprocessos ainda vivos do arquivo, o que conferimos com um teste mínimo. Os 3 vivos eram as APIs, que M14 não para. Logo, os 7 workers já tinham saído e M14 estava preso nessa espera. O `afterAll` chamou `stop()` de novo, esperou o mesmo dreno até 120 s e não executou a limpeza (down das migrations e DROP ROLE).
+- **Limite da prova.** A causa foi deduzida dessa contagem; o travamento não foi reproduzido. Nenhum dos testes abaixo travou:
+  - cerca de 980 ciclos sintéticos de processos filhos, com e sem stress de CPU, dentro e fora do `bun test`;
+  - 28 execuções reais da matriz.
+  O motivo de o EOF do pipe não ter chegado naquela execução continua desconhecido.
+- **Correção.**
+  - `stop()` idempotente: M14 e `afterAll` compartilham a mesma parada.
+  - Dreno limitado a 5 s após o exit. Se o prazo vence, o helper registra a linha de prova `{"proof":"child-drain-timeout",...}` e devolve `drained:false`. Exit code e sinal continuam verificados.
+  - `afterAll` com `Promise.allSettled`, para a limpeza sempre rodar.
+  - `AbortSignal.timeout` de 20 s nas chamadas HTTP da matriz, acima do budget de 15 s da TX da API.
+  - Teste determinístico [child-stop.test.ts](../../tests/matrix/delivery/child-stop.test.ts) com um pipe que nunca chega ao EOF.
+- **Independência da causa.** A correção não depende do motivo de o EOF faltar. Qualquer espera de dreno agora termina em no máximo 5 s, deixa rastro e não bloqueia a limpeza. Nenhum timeout de teste foi aumentado.
+- **Resultados após a correção.** Matriz 20/20 com exit 0 (15 pass, 0 fail; M14 entre 95,79 e 129,63 ms, nenhum `child-drain-timeout` real). Reprodução integral 3/3 com exit 0 (80 etapas, 399 testes, 0 falhas; o teste a mais é o child-stop).
+- **Escopo das evidências.** A execução desta pasta é do sourceCommit acima. [product-tree.json](product-tree.json) continua descrevendo a árvore medida e não foi recalculado, pois os testes mudaram depois. Nenhum outro arquivo desta pasta tem manifesto de hash que inclua o resumo da 1ª tentativa.
 
 ## Carga padrão após LockMode
 

@@ -156,6 +156,7 @@ INFRA_SUITES=(
   tests/matrix/delivery/matrix.test.ts
   tests/integration/schema/financial-schema.test.ts
   tests/integration/schema/messaging-migrations.test.ts
+  tests/integration/schema/schema-drift.test.ts
   tests/integration/wallet/open-wallet.test.ts
   tests/integration/wager/process-wager.test.ts
   tests/integration/wager/review-regressions.test.ts
@@ -221,6 +222,8 @@ if [ "$MATRIX_ONLY" = 0 ]; then
     run_step "regression: $suite" pass env "${UNSET[@]}" JWP_SQS_ENDPOINT="$SQS_URL" "${assignments[@]}" bun test "$suite" --timeout "$timeout"
   }
   regress "$(jwp_repro_container schema)" tests/integration/schema/financial-schema.test.ts 60000 JWP_SCHEMA_DATABASE_URL=@URL@
+  # Guarda de drift entre migrations SQL e entidades MikroORM (JWP-ADR-015); exige banco vazio próprio.
+  regress "$(jwp_repro_container schemadrift)" tests/integration/schema/schema-drift.test.ts 60000 JWP_SCHEMA_DATABASE_URL=@URL@
   # A role jwp_runtime pertence ao cluster; migrations de mensageria exigem cluster vazio próprio.
   regress "$(jwp_repro_container msgschema)" tests/integration/schema/messaging-migrations.test.ts 60000 JWP_MESSAGING_SCHEMA_DATABASE_URL=@URL@
   regress "$(jwp_repro_container wallet)" tests/integration/wallet 60000 JWP_WALLET_DATABASE_URL=@URL@

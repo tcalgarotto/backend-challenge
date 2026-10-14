@@ -15,8 +15,9 @@ O enunciado está em [docs/CHALLENGE.md](docs/CHALLENGE.md); as decisões detalh
 5. [Demonstração manual](#demonstração-manual)
 6. [Resultados de carga](#resultados-de-carga)
 7. [Requisitos do enunciado → onde estão](#requisitos-do-enunciado--onde-estão)
-8. [Limites e trade-offs](#limites-e-trade-offs)
-9. [Mapa da documentação](#mapa-da-documentação)
+8. [Segurança](#segurança)
+9. [Limites e trade-offs](#limites-e-trade-offs)
+10. [Mapa da documentação](#mapa-da-documentação)
 
 ## Início rápido
 
@@ -164,6 +165,8 @@ A matriz (`tests/matrix/delivery/matrix.test.ts`) cobre os cenários da seção 
 | ROLLBACK/REFUND antes da referência | M10 |
 | Reinício com consistência final | M13; M14 (`wallet.balance == saldo reconstruído pelo ledger` para todas as wallets) |
 
+Na 1ª tentativa da execução de referência, M14 e seu hook de limpeza excederam timeout por uma espera sem prazo no helper que para os processos da matriz. A causa, a correção limitada e as repetições estão em [docs/evidence](docs/evidence/README.md#causa-da-falha-de-m14-na-1ª-tentativa).
+
 Isolamento de execuções simultâneas (sufixos, portas, diretórios de saída): [docs/workers.md](docs/workers.md#reprodução-completa-bun-run-testintegration).
 
 ## Demonstração manual
@@ -211,7 +214,7 @@ A [execução de referência após LockMode](docs/LOAD_TEST.md#execução-de-ref
 | Invariantes ao final (saldo = ledger, eventos completos) | 17/17 em todas as rodadas; downstream sem duplicados nem faltantes |
 | SQS (100 comandos) | 92 a 99 msg/s com 1 processo de workers; 133 a 147 msg/s com 3 |
 
-A varredura é anterior à mudança para `LockMode` de 13/10/2026; o código entregue foi exercitado por uma canary de correção (3 s, 4 VUs), também com 17/17 invariantes, que não substitui a varredura.
+A varredura é anterior à mudança para `LockMode` de 13/10/2026. O código com `LockMode` tem execução de referência registrada em [docs/evidence](docs/evidence/README.md): reprodução integral com 398 testes e 4022 asserções, Compose 18/18 e carga padrão com 17/17 invariantes e 42703/42703 eventos entregues. A varredura acima continua sendo a medição de escala por VUs e réplicas.
 
 ## Requisitos do enunciado → onde estão
 
@@ -229,6 +232,12 @@ A varredura é anterior à mudança para `LockMode` de 13/10/2026; o código ent
 | §12 Observabilidade | `/metrics` (transações por status, duplicatas, retries, filas e DLQs, espera de lock, outbox pendente e idade, latência), logs JSON com `correlationId`; [ADR 009](ARCHITECTURE.md#jwp-adr-009--http-códigos-e-diagnóstico) |
 | §13 Testes | [Verificação](#verificação) |
 | Diferencial: teste de carga | [Resultados de carga](#resultados-de-carga) |
+
+## Segurança
+
+- **Método.** Auditoria com o `security-audit-skill` (Cloudflare) sobre `src`, migrations, workers, Dockerfile e Compose. Os testes dinâmicos rodaram num sandbox Docker isolado, sem rede externa.
+- **Resultado.** Nenhum achado confirmado. Concorrência, idempotência, reversão paralela, validação de quantias, injeção, cursor entre carteiras, logs e SQS seguraram nos testes. Dois itens de implantação, sem severidade, precisam de validação: bind/adapter do modo local e IAM de quem publica na fila de comandos.
+- **Escopo.** Vale para a matriz testada. O crítico de cobertura não foi executado, então isso não é uma afirmação de ausência de vulnerabilidades. Detalhes em [docs/security/](docs/security/README.md).
 
 ## Limites e trade-offs
 
@@ -251,6 +260,7 @@ A varredura é anterior à mudança para `LockMode` de 13/10/2026; o código ent
 | [docs/workers.md](docs/workers.md) | Workers, retry/DLQ, SIGTERM e referência operacional (Compose, variáveis, execução local, smoke, reprodução, manifesto do pacote) |
 | [docs/LOAD_TEST.md](docs/LOAD_TEST.md) | Metodologia, resultados e limites do teste de carga |
 | [docs/STATUS.md](docs/STATUS.md) | O que funciona e limitações conhecidas |
+| [docs/security/README.md](docs/security/README.md) | Auditoria de segurança: método, resultado, itens a validar e escopo |
 | [contracts/messaging/README.md](contracts/messaging/README.md) | Filas, envelopes e JSON Schemas dos eventos |
 | [infra/postgres/README.md](infra/postgres/README.md) | Roles do PostgreSQL e privilégios de runtime |
 

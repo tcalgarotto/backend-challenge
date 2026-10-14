@@ -251,7 +251,7 @@ As réplicas encerraram com exit 0 após SIGTERM. Os únicos warnings de log for
 
 **Pergunta:** onde a vazão para de subir e o que satura, com HTTP e workers em processos separados (`LOAD_WORKERS` = réplicas), PostgreSQL e LocalStack reais. Sem meta de RPS; uma execução por ponto.
 
-**Configuração:** 8, 32 e 64 VUs × 1 e 3 réplicas HTTP (com 1 e 3 processos de workers); 10 s por cenário HTTP, aquecimento de 2 s, 30 wallets no `distributed`, 150 BETs no `hot-drain` e 100 comandos SQS em 10 wallets (mesmos parâmetros da validação do mix completo). Mix HTTP completo: BET, WIN, LOSS 0.00, REFUND e ROLLBACK. Execução sequencial às 15:10–15:21 (UTC−3), no mesmo host descrito em "Ambiente", com os containers de outros trabalhos parados antes do início (load average de 1 min = 1,21 na primeira rodada). Código do produto: V4, sem mudanças locais em `src/` nem no script de carga durante a sequência. A varredura é anterior à mudança de LockMode de 13/10/2026 e não foi repetida depois dela; para o código entregue, ver a canary de correção abaixo.
+**Configuração:** 8, 32 e 64 VUs × 1 e 3 réplicas HTTP (com 1 e 3 processos de workers); 10 s por cenário HTTP, aquecimento de 2 s, 30 wallets no `distributed`, 150 BETs no `hot-drain` e 100 comandos SQS em 10 wallets (mesmos parâmetros da validação do mix completo). Mix HTTP completo: BET, WIN, LOSS 0.00, REFUND e ROLLBACK. Execução sequencial às 15:10–15:21 (UTC−3), no mesmo host descrito em "Ambiente", com os containers de outros trabalhos parados antes do início (load average de 1 min = 1,21 na primeira rodada). Código do produto: V4, sem mudanças locais em `src/` nem no script de carga durante a sequência. A varredura é anterior à mudança de LockMode de 13/10/2026 e não foi repetida depois dela. A evidência atual do código com LockMode é a [execução de referência](#execução-de-referência) (configuração padrão, 17/17 invariantes, 42703/42703 eventos; [docs/evidence](evidence/README.md)). A canary curta no fim deste documento é histórica.
 
 | HTTP + workers | VUs | distributed req/s | p50 / p95 / p99 ms | hot-wallet req/s | p50 / p95 / p99 ms | ms/tx na hot wallet (≈1/vazão) | máx. sessões esperando lock (hot) | erros | retries + falhas SQL transitórias | gates | downstream: recebidos/esperados, dup, faltando |
 |---|---:|---:|---|---:|---|---:|---:|---:|---:|---|---|
@@ -378,7 +378,9 @@ A versão compilada dessas medições de isolamento não foi preservada com arte
 
 ## Canary histórica de correção (13/10/2026)
 
-Depois da mudança de LockMode, o gate final rodou `bun run test:load` sobre o pacote de entrega, com 3 HTTP + 3 workers, 4 VUs, 8 wallets, 3 s por cenário HTTP, aquecimento de 1 s, 500 BETs no hot-drain e 20 comandos SQS em 4 wallets. **É uma canary de correção, não benchmark nem SLA:** a janela de 3 s e os 4 VUs servem para exercitar o código final sob concorrência real, não para medir capacidade. Os req/s abaixo não se comparam às tabelas anteriores nem as substituem.
+Histórica: foi substituída como evidência do código com LockMode pela [execução de referência](#execução-de-referência), publicada em [docs/evidence](evidence/README.md) (3 HTTP + 3 workers, 32 VUs, 20 s por cenário; 17/17 invariantes; downstream 42703/42703 eventIds, 0 duplicados e 0 faltantes). Os números abaixo ficam só como registro.
+
+Depois da mudança de LockMode e antes da execução de referência, o gate final rodou `bun run test:load` sobre o pacote de entrega, com 3 HTTP + 3 workers, 4 VUs, 8 wallets, 3 s por cenário HTTP, aquecimento de 1 s, 500 BETs no hot-drain e 20 comandos SQS em 4 wallets. **É uma canary de correção, não benchmark nem SLA:** a janela de 3 s e os 4 VUs servem para exercitar o código final sob concorrência real, não para medir capacidade. Os req/s abaixo não se comparam às tabelas anteriores nem as substituem.
 
 | Cenário | Vazão | p50 / p95 / p99 | Erros HTTP |
 |---|---:|---|---:|

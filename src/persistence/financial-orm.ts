@@ -36,7 +36,7 @@ export const WalletRecordSchema = new EntitySchema<WalletRecord>({
   class: WalletRecord, tableName: 'wallets', properties: {
     id: { type: 'uuid', primary: true }, playerId: { type: 'string' }, currency: { type: 'string' },
     balance: { type: new FinancialDecimalType(), precision: 20, scale: 2 },
-    version: { type: 'bigint', default: 1 }, createdAt: { type: 'Date', defaultRaw: 'now()' },
+    version: { type: 'bigint' }, createdAt: { type: 'Date', defaultRaw: 'now()' },
     updatedAt: { type: 'Date', defaultRaw: 'now()' },
   },
 });

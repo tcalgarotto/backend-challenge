@@ -124,11 +124,36 @@ Estrutura: `src/wallet/{domain,application,http,infrastructure}`, `src/wagering/
 
 **Relógio.** No scheduler, o timestamp da transição é `max(relógio do worker, createdAt, pendingReferenceAt)`, para nunca anteceder a aceitação quando há diferença de relógio entre hosts. O lease continua validado só pelo relógio do worker e não é estendido.
 
-**Reversão única.** Uma transação referenciada é revertida no máximo uma vez, qualquer que seja o tipo. A regra 4 da seção 7 do enunciado proíbe duas reversões "pelo mesmo tipo"; a regra adotada contém essa e é mais restritiva: REFUND e ROLLBACK da mesma BET também não coexistem, porque ambos creditariam o mesmo stake (100,00 → BET 25,00 → REFUND → 100,00; um ROLLBACK da mesma BET levaria a 125,00, crédito duplicado). A primeira reversão PROCESSED vence; a segunda vira REJECTED/`ALREADY_REVERSED` (422, persistida com evento). ROLLBACK de um REFUND continua permitido, pois referencia o REFUND; ROLLBACK de ROLLBACK é proibido; WIN que referencia a BET não é reversão. A barreira final é o índice `wager_one_reversal` (ADR-003); HTTP, SQS e scheduler também consultam reversões existentes sob o lock da wallet.
+**Reversão única por referência.**
+- *Requisito do enunciado* ([docs/CHALLENGE.md §7](docs/CHALLENGE.md#7-regras-de-negócio)): a tabela diz que REFUND "reverte uma `BET` `PROCESSED`, uma única vez" e que ROLLBACK "reverte uma transação `PROCESSED`, uma única vez". A regra 4 diz: "uma referência não pode ser revertida duas vezes pelo mesmo tipo de operação". O enunciado pede que interpretações adicionais sejam documentadas.
+- *Interpretação.* Uma transação referenciada é revertida no máximo uma vez, qualquer que seja o tipo. A regra adotada contém a regra 4 e é mais restritiva: REFUND e ROLLBACK da mesma BET também não coexistem.
+- *Motivo.* Os dois creditariam o mesmo stake. Exemplo: 100,00 → BET 25,00 → REFUND → 100,00; um ROLLBACK da mesma BET levaria a 125,00, um crédito duplicado que viola a correção financeira. A leitura literal "por tipo" permitiria esse caso.
+- *Comportamento.* A primeira reversão PROCESSED vence; a segunda vira REJECTED/`ALREADY_REVERSED` (422, persistida com evento). ROLLBACK de um REFUND continua permitido, pois referencia o próprio REFUND. ROLLBACK de ROLLBACK é proibido. WIN que referencia a BET não é reversão.
+- *Código.*
+  - Domínio: `WagerTransaction.referenceDecision` em [wager-transaction.ts](src/wagering/domain/wager-transaction.ts) (`alreadyReversed` → `ALREADY_REVERSED`).
+  - Consultas sob o lock da wallet em [sql-process-wager-store.ts](src/wagering/infrastructure/sql-process-wager-store.ts) (HTTP/SQS) e em [pending-reference-scheduler.ts](src/messaging/pending-reference-scheduler.ts).
+  - Barreira final: índice único parcial `wager_one_reversal(reference_transaction_id) WHERE status='PROCESSED' AND kind IN ('REFUND','ROLLBACK')`, sem `kind`, em [Migration202610110004](src/persistence/migrations/Migration202610110004.ts) (ADR-003).
+- *Prova.*
+  - M08 em `tests/matrix/delivery/matrix.test.ts` (`M08 reversal addendum: one applied reversal per referenced transaction, any kind; ROLLBACK of REFUND allowed`): REFUND seguido de ROLLBACK resulta em 422 `ALREADY_REVERSED`, a ordem inversa também, e seis reversões concorrentes entre instâncias resultam em uma aplicada.
+  - A preparação da matriz confere a definição do índice sem `kind`.
+  - `tests/unit/wager-transaction.test.ts` (`self-reference and one reversal per type use explicit decisions; rejected identity is terminal`).
 
-**LOSS.** LOSS usa exatamente `money.amount = "0.00"` e não aceita referência. É confirmado como PROCESSED com `WagerTransactionProcessed`, sem mudar saldo nem versão, sem ledger e sem `WalletBalanceChanged`. Valor diferente de zero ou referência são recusados com 400 antes da aceitação.
+**LOSS.**
+- *Requisito do enunciado* ([docs/CHALLENGE.md §7](docs/CHALLENGE.md#7-regras-de-negócio)): LOSS tem efeito "nenhum" no saldo, ledger "nenhuma" e "registra o resultado sem mover saldo". Operações sem efeito no saldo "não geram lançamento". `WagerTransactionProcessed` vale para "qualquer transação aplicada, inclusive `LOSS`". As regras 1 e 3 só exigem e definem referência para REFUND/ROLLBACK; na tabela, só WIN "pode referenciar a `BET`".
+- *Interpretação.* LOSS usa exatamente `money.amount = "0.00"` e não aceita referência. É confirmado como PROCESSED com `WagerTransactionProcessed`, sem mudar saldo nem versão, sem ledger e sem `WalletBalanceChanged`. Valor diferente de zero ou referência são recusados com 400 antes da aceitação.
+- *Motivo.* Um valor positivo sugeriria movimento que não existe e poderia ser confundido com débito. Uma referência à BET criaria um vínculo que não se resolve nem se reverte (LOSS não é revertido) e uma dependência PENDING_REFERENCE sem efeito financeiro.
+- *Código.*
+  - Fábricas e reidratação de `WagerTransaction` em [wager-transaction.ts](src/wagering/domain/wager-transaction.ts): `Loss ? !money.isZero() : !money.isPositive()` → `INVALID_WAGER`; referência só em WIN/REFUND/ROLLBACK.
+  - `ledgerDirectionFor` devolve `undefined` para LOSS.
+  - No banco ([financial-sql.ts](src/persistence/migrations/financial-sql.ts)): `CHECK ((kind='LOSS' AND amount=0) OR (kind<>'LOSS' AND amount>0))`, LOSS sem referência e ledger proibido para LOSS pelo constraint trigger.
+- *Prova.*
+  - `tests/unit/wager-transaction.test.ts` (`factories enforce external kinds, positive money and zero LOSS; OPENING is internal only`).
+  - `tests/unit/integration-events.test.ts` (`LOSS emits Processed with unchanged wallet version and cannot emit BalanceChanged`).
+  - `tests/integration/wager/process-wager.test.ts` (`BET, WIN, LOSS: exact amounts, historical snapshots and zero-effect LOSS`).
+  - `tests/integration/schema/financial-schema.test.ts` (`LOSS and every non-PROCESSED status reject ledger; wager/ledger amount/direction must agree`).
+  - M07 e M09 na matriz de entrega.
 
-**Prova.** M08 e M10 em `tests/matrix/delivery/matrix.test.ts` (inclusive concorrência entre instâncias e referência fora de ordem via HTTP e SQS), `tests/unit/wager-transaction.test.ts`, `tests/integration/messaging/scheduler/audit-regressions.test.ts`.
+**Prova (demais regras).** M10 em `tests/matrix/delivery/matrix.test.ts` (referência fora de ordem via HTTP e SQS) e `tests/integration/messaging/scheduler/audit-regressions.test.ts`.
 
 ## JWP-ADR-006 — Atomicidade e inbox
 
@@ -234,6 +259,30 @@ Fontes: [visibilidade SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/lat
 
 Fontes: [transações MikroORM](https://mikro-orm.io/docs/transactions), [locks PostgreSQL](https://www.postgresql.org/docs/current/explicit-locking.html), [constraints PostgreSQL](https://www.postgresql.org/docs/current/ddl-constraints.html), [tipos numeric](https://www.postgresql.org/docs/current/datatype-numeric.html).
 
+## JWP-ADR-015 — Migrations em SQL manual e guarda de drift contra as entidades
+
+**Decisão.** O schema é definido só pelas migrations MikroORM com SQL escrito à mão (`src/persistence/migrations/`, Migration202610110002–Migration202610130009). Não usamos `schema:update` nem migrations geradas a partir das entidades. As duas entidades (`WalletRecordSchema`, `WagerTransactionLockSchema`, ADR-014) servem a leituras e locks e são conferidas contra o banco migrado por um teste automático de drift.
+
+**Motivo.** O gerador de diff do ORM não expressa o que o schema financeiro precisa: índices únicos parciais (`wager_one_reversal` em `reference_transaction_id` só para REFUND/ROLLBACK PROCESSED; `outbox_ready`, `outbox_wallet_pending`, `pending_reference_ready`), CHECKs entre colunas, constraint triggers DEFERRABLE, triggers de imutabilidade, funções PL/pgSQL, grants da role `jwp_runtime` e backfills. Os claims `FOR UPDATE SKIP LOCKED` do outbox e do scheduler dependem desses índices parciais para não varrer linhas publicadas. Gerado contra as entidades atuais, o diff do ORM propõe apagar tabelas de mensageria, colunas de `wager_transactions`, CHECKs e índices parciais, e trocar `text` por `varchar(255)`. Aplicá-lo seria destrutivo.
+
+**Locks e CONCURRENTLY.** As migrations rodam com `transactional: true` e `allOrNothing: true`: uma falha desfaz o lote inteiro. `CREATE INDEX CONCURRENTLY` não roda dentro de transação, então os índices usam `CREATE INDEX` comum, que bloqueia escritas na tabela durante a construção. Na entrega isso é aceitável, porque as tabelas nascem vazias ou pequenas. Em produção com volume, um índice novo deve entrar numa migration própria, não transacional, com `CONCURRENTLY`, `lock_timeout` curto e verificação de índice `INVALID` após falha. Essa migration ficaria fora da garantia de tudo ou nada.
+
+**Guarda de drift.** [tests/integration/schema/schema-drift.test.ts](tests/integration/schema/schema-drift.test.ts) aplica as migrations num banco vazio, lê os metadados do MikroORM e compara com o catálogo do PostgreSQL (`pg_attribute`, `pg_index`, `pg_constraint`):
+- tabelas;
+- colunas;
+- tipos, com `string` sem tamanho mapeado para `text` por convenção do projeto;
+- nulabilidade;
+- defaults, comparados em todas as colunas, inclusive PK/`id`: um default só no banco (por exemplo `gen_random_uuid()` em `wallets.id`) ou só na entidade é divergência; a normalização só remove sintaxe do catálogo (cast final como `::text`/`::character varying(3)` e parênteses externos) e ignora caixa/espaços fora de literais; o conteúdo de literais nunca muda (`'BRL'` ≠ `'brl'`, `'BR L'` ≠ `'BRL'`), não há equivalência numérica ou booleana (`1` ≠ `1.0` ≠ `'1'`, `true` ≠ `'t'`) e `DEFAULT NULL` equivale a sem default. A única equivalência de palavra-chave é explícita (`DEFAULT_KEYWORD_EQUIVALENCES`: `CURRENT_TIMESTAMP` ≡ `now()`, mesmo instante de início da transação no PostgreSQL). Controles negativos cobrem cada caso adversarial e controles positivos, as equivalências aceitas;
+- PK;
+- uniques e índices declarados;
+- FKs de relações.
+
+Uma tabela mapeada por inteiro também falha se o banco tiver uma coluna que a entidade não mapeia. `wager_transactions` é projeção deliberada (só identidade para o lock) e está declarada como tal. A guarda roda sem exceções: não há dispensa implícita de default para PK, e a lista explícita `DEFAULT_EXEMPTIONS` (`tabela.coluna` → justificativa, que também precisaria constar aqui) está vazia. Um controle negativo cria `DEFAULT gen_random_uuid()` em `wallets.id` numa transação desfeita e exige a divergência. Além disso, a única divergência encontrada na primeira execução, `default: 1` em `wallets.version` só na entidade, foi removida da entidade, porque wallets são inseridas por SQL com versão explícita e a entidade só lê e bloqueia. Outros dois controles negativos garantem que a guarda detecta erros dos dois lados. No lado das migrations, ALTERs são aplicados numa transação desfeita depois. No lado das entidades, entram uma tabela inexistente, uma coluna nova e um unique declarado.
+
+**Custo de manutenção.** Mudar uma entidade sem migration, ou uma migration sem ajustar a entidade, falha na reprodução em vez de aparecer só em runtime. A revisão manual fica restrita ao que o ORM não modela (CHECKs, triggers, índices parciais), coberto por `financial-schema.test.ts` e `messaging-migrations.test.ts`.
+
+**Como verificar.** `JWP_SCHEMA_DATABASE_URL=<owner de banco vazio descartável> bun test tests/integration/schema/schema-drift.test.ts`. O teste também roda em `bun run test:integration` (passo `regression: tests/integration/schema/schema-drift.test.ts` e controle sem infraestrutura). A prova JSON `schema-drift` lista entidades, projeções e divergências encontradas (esperado: nenhuma).
+
 ## Fora do escopo
 
 IdP real, implantação pública, dashboard, tracing distribuído e ledger de partidas dobradas. As suítes de integração, concorrência e recuperação falham quando PostgreSQL ou SQS não estão disponíveis; nenhuma indisponibilidade vira sucesso silencioso.
@@ -244,6 +293,10 @@ IdP real, implantação pública, dashboard, tracing distribuído e ledger de pa
 ### Injeção de falhas por subclasses de teste
 
 `FaultyStore extends SqlProcessWagerStore` sobrescreve `processInTransaction` somente no teste de regressão. Isso permite provar que erro de aplicação é propagado sem retry e sem mudança durável, usando a transação real, sem introduzir uma flag de falha em produção. O custo é acoplar o teste a essa fronteira pública do adapter; a evidência não substitui falhas SQL, indisponibilidade e SIGKILL, cobertas por outros cenários. Prova: [tests/integration/wager/review-regressions.test.ts:97](tests/integration/wager/review-regressions.test.ts#L97), teste `uncoded application errors are not relabeled or retried as connection failures`.
+
+### Parada dos processos da matriz
+
+A matriz sobe processos reais (APIs, workers, publishers e schedulers). `Child.stop()` em [support.ts](tests/matrix/delivery/support.ts) envia SIGTERM e, depois de 20 s, SIGKILL. Após o exit, o dreno dos pipes tem prazo de 5 s; se vencer, registra a prova `child-drain-timeout`. A parada é idempotente, e o `afterAll` usa `Promise.allSettled` para que o down das migrations e o DROP ROLE sempre rodem. Origem: o timeout de M14 na 1ª tentativa da execução de referência ([docs/evidence](docs/evidence/README.md#causa-da-falha-de-m14-na-1ª-tentativa)). Prova: `tests/matrix/delivery/child-stop.test.ts`.
 
 ### Retomada dos dependentes de PENDING_REFERENCE
 

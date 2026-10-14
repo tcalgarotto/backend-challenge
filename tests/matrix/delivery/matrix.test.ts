@@ -98,8 +98,9 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await Promise.all(children().map(child => child.stop()));
-  await Promise.all([commands, events].filter(Boolean).map(pair => pair.dispose()));
+  // Falha ao parar um filho não pode impedir down das migrations e DROP ROLE.
+  await Promise.allSettled(children().map(child => child.stop()));
+  await Promise.allSettled([commands, events].filter(Boolean).map(pair => pair.dispose()));
   client?.destroy();
   if (!orm) return;
   try {

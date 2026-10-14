@@ -11,6 +11,9 @@ export type Line = Record<string, unknown>;
 
 export const root = resolve(import.meta.dir, '../../..');
 const decoder = new TextDecoder();
+// Saída do filho chega antes do exit; após o exit, só falta o EOF do pipe.
+const DRAIN_GRACE_MS = 5_000;
+export interface StopResult { name: string; pid: number; exitCode: number | null; signal: string | null; drained: boolean }
 
 
 
@@ -94,14 +97,25 @@ export class Child {
 
   of(type: string): Line[] { return this.lines.filter(line => line['type'] === type); }
 
+  private stopping?: Promise<StopResult>;
+
   /** SIGTERM ignorado aparece como SIGKILL na prova, sem ocultar a falha. */
-  async stop(): Promise<{ name: string; pid: number; exitCode: number | null; signal: string | null }> {
+  // Idempotente: M14 e afterAll compartilham a mesma parada em vez de esperar o dreno de novo.
+  stop(): Promise<StopResult> {
+    this.stopping ??= this.terminate();
+    return this.stopping;
+  }
+
+  private async terminate(): Promise<StopResult> {
     if (this.proc.exitCode === null && this.proc.signalCode === null) this.proc.kill('SIGTERM');
     const exited = await Promise.race([this.proc.exited.then(() => true), Bun.sleep(20_000).then(() => false)]);
     if (!exited) this.proc.kill('SIGKILL');
     await this.proc.exited;
-    await this.drained;
-    return { name: this.name, pid: this.pid, exitCode: this.proc.exitCode, signal: exited ? this.proc.signalCode : 'SIGKILL' };
+    // Processo já encerrado: EOF do pipe sem prazo travou M14 e o afterAll (058).
+    // O dreno ganha prazo e o atraso fica visível na prova, sem mascarar exit/sinal.
+    const drained = await Promise.race([this.drained.then(() => true), Bun.sleep(DRAIN_GRACE_MS).then(() => false)]);
+    if (!drained) console.log(JSON.stringify({ proof: 'child-drain-timeout', name: this.name, pid: this.pid, graceMs: DRAIN_GRACE_MS }));
+    return { name: this.name, pid: this.pid, exitCode: this.proc.exitCode, signal: exited ? this.proc.signalCode : 'SIGKILL', drained };
   }
 }
 
@@ -115,6 +129,7 @@ export async function startApi(name: string, env: Record<string, string>): Promi
 }
 
 export const httpStats = { requests: 0, retried503: 0 };
+const HTTP_TIMEOUT_MS = 20_000;
 
 
 
@@ -124,8 +139,9 @@ export async function call(api: ApiInstance, method: string, path: string, body?
 Promise<{ status: number; body: any; instance: string }> {
   for (let attempt = 1; ; attempt++) {
     httpStats.requests++;
+    // Prazo acima do budget de TX da API (15s): requisição presa vira erro nomeado, não timeout do teste.
     const response = await fetch(api.base + path, {
-      method, headers: { 'Content-Type': 'application/json', ...headers },
+      method, headers: { 'Content-Type': 'application/json', ...headers }, signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
       ...(body === undefined ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }),
     });
     const text = await response.text();
