@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import type { SQSClient } from '@aws-sdk/client-sqs';
+import { SendMessageCommand, type SQSClient } from '@aws-sdk/client-sqs';
 import { openFinancialOrm } from '../../../src/persistence/financial-orm.js';
-import { SqlEventDeduplicator, SqsEventConsumer, type EventConsumption } from '../../../src/messaging/outbox/sqs-event-consumer.js';
+import { EVENT_INBOX_CONSUMER } from '../../../src/messaging/outbox/sqs-event-consumer.js';
 import { sendWagerTransactionRequested } from '../../../src/messaging/wager-message.js';
 import { isolatedPair, queueAttributes, requireSqs, sqsClient, type QueuePair } from '../../integration/sqs/support/sqs.js';
 import {
@@ -29,7 +29,7 @@ const q = (sql: string, args: unknown[] = []) => orm.em.fork().getConnection().e
 const pgArray = (values: readonly string[]) => `{${values.join(',')}}`;
 const proof = (name: string, data: Record<string, unknown>) => console.log(JSON.stringify({ proof: name, ...data }));
 
-function spawnWorker(name: string, script: 'wager-worker.ts' | 'publisher-worker.ts', env: Record<string, string> = {}): Child {
+function spawnWorker(name: string, script: 'wager-worker.ts' | 'publisher-worker.ts' | 'event-consumer-worker.ts', env: Record<string, string> = {}): Child {
   const queueUrl = script === 'wager-worker.ts' ? commands.url : events.url;
   const child = Child.spawn(name, ['bun', `tests/recovery/crash/${script}`], {
     JWP_WORKER_DATABASE_URL: runtimeUrl, JWP_WORKER_QUEUE_URL: queueUrl, JWP_OUTBOX_LEASE_MS: String(OUTBOX_LEASE_MS), ...env,
@@ -211,7 +211,7 @@ test('publisher SIGKILLed before SendMessage: another instance publishes after t
   proof('publisher-crash-before-send', { killed, parkedEvents: parked.length, outboxEvents: total, queueVisible: total, reclaimedBy: other.pid });
 }, 90_000);
 
-test('publisher SIGKILLed after SendMessage and before markPublished: restart re-sends, SQS FIFO dedup delivers once', async () => {
+test('publisher SIGKILLed after SendMessage: at-least-once retry within the FIFO dedup window; durable inbox controls acceptance', async () => {
   const wallets = await Promise.all(Array.from({ length: 3 }, () => openWallet(apis[0]!)));
   const results = await Promise.all(wallets.map(w => submit(apis[0]!, wager(w, 'BET', '10.00'))));
   expect(results.map(r => r.status)).toEqual([200, 200, 200]);
@@ -236,10 +236,48 @@ test('publisher SIGKILLed after SendMessage and before markPublished: restart re
   expect(restarted.of('publication').filter(l => l['status'] === 'PUBLISHED').map(l => l['eventId'])).toEqual(expect.arrayContaining(parked));
   const total = (await q('SELECT count(*)::int n FROM outbox_events'))[0]!['n'] as number;
   await Bun.sleep(500);
-  // Reenvio preserva eventId; MessageDeduplicationId impede nova entrega dentro da janela FIFO.
+  // Mesmo eventId na janela de 5 min: esta observação é limitada à dedup FIFO, não prova entrega única.
   expect(await queueDepth(events.url)).toEqual({ visible: total, inFlight: 0 });
   await restarted.stop();
-  proof('publisher-crash-after-send', { killed, parkedEvents: parked.length, resentAttempts: 2, outboxEvents: total, queueVisible: total });
+  proof('publisher-crash-after-send', { killed, parkedEvents: parked.length, resentAttempts: 2, outboxEvents: total, queueVisible: total,
+    scope: 'same deduplication ID within the five-minute FIFO window; not exactly-once delivery' });
+}, 90_000);
+
+test('same command message delivered twice outside FIFO dedup: recreated worker keeps balance, ledger and outbox unchanged', async () => {
+  const wallet = await openWallet(apis[0]!);
+  const bet = wager(wallet, 'BET', '10.00'), message = envelope(bet);
+  const body = JSON.stringify(message);
+  const first = spawnWorker('inbox-explicit-first', 'wager-worker.ts');
+  await ready(first);
+  const initial = await client.send(new SendMessageCommand({ QueueUrl: commands.url, MessageBody: body,
+    MessageGroupId: wallet.id, MessageDeduplicationId: message.messageId }));
+  expect(initial.MessageId).toBeDefined();
+  await acknowledged([first], [message.messageId]);
+  const before = await walletState(orm, wallet.id);
+  expect(before).toMatchObject({ balance: '90.00', version: '2', ledger: 2, debits: 1 });
+  const inboxBefore = await q('SELECT result_snapshot, received_at, processed_at FROM wager_message_inbox WHERE message_id=?', [message.messageId]);
+  expect(inboxBefore).toHaveLength(1);
+  expect(inboxBefore[0]!['processed_at']).not.toBeNull();
+  const outboxBefore = await q('SELECT event_id FROM outbox_events WHERE wallet_id=? ORDER BY event_id', [wallet.id]);
+  await first.stop();
+
+  // O corpo é idêntico, mas o ID de dedup novo exige outra mensagem física do SQS.
+  const physicalReplay = await client.send(new SendMessageCommand({ QueueUrl: commands.url, MessageBody: body,
+    MessageGroupId: wallet.id, MessageDeduplicationId: randomUUID() }));
+  expect(physicalReplay.MessageId).toBeDefined();
+  expect(physicalReplay.MessageId).not.toBe(initial.MessageId);
+  const restarted = spawnWorker('inbox-explicit-recreated', 'wager-worker.ts');
+  await ready(restarted);
+  await acknowledged([restarted], [message.messageId]);
+  expect(restarted.pid).not.toBe(first.pid);
+  expect(await walletState(orm, wallet.id)).toEqual(before);
+  expect(await q('SELECT result_snapshot, received_at, processed_at FROM wager_message_inbox WHERE message_id=?', [message.messageId])).toEqual(inboxBefore);
+  expect(await q('SELECT event_id FROM outbox_events WHERE wallet_id=? ORDER BY event_id', [wallet.id])).toEqual(outboxBefore);
+  expect((await q('SELECT count(*)::int n FROM wager_transactions WHERE external_transaction_id=?', [bet.body.externalTransactionId]))[0]!['n']).toBe(1);
+  expect((await q('SELECT count(*)::int n FROM wager_message_inbox WHERE message_id=?', [message.messageId]))[0]!['n']).toBe(1);
+  await restarted.stop();
+  proof('same-command-twice-persistent-inbox', { logicalMessages: 1, physicalMessages: 2, recreatedConsumer: true,
+    debitEffects: 1, balance: '90.00', ledgerEntries: 2, durableInboxRows: 1, outboxUnchanged: true });
 }, 90_000);
 
 test('SIGKILL of every process mid-traffic, then restart: each operation applied once and balance equals ledger', async () => {
@@ -307,27 +345,68 @@ test('SIGKILL of every process mid-traffic, then restart: each operation applied
   });
 }, 180_000);
 
-test('after every crash, each outbox event reaches wager-events exactly once', async () => {
+test('event consumer SIGKILL after inbox commit: restart and forced FIFO-window bypass preserve one acceptance and the financial state', async () => {
   const total = (await q('SELECT count(*)::int n FROM outbox_events'))[0]!['n'] as number;
   expect(await unpublished()).toBe(0);
-  const consumer = new SqsEventConsumer(client, events.url, new SqlEventDeduplicator(orm), { waitTimeSeconds: 1 });
-  const consumed: EventConsumption[] = [];
+  const crashing = spawnWorker('event-inbox-barrier', 'event-consumer-worker.ts', { JWP_EVENT_BARRIER: 'after-inbox' });
+  await ready(crashing);
+  const parked = await crashing.waitFor(line => line['type'] === 'barrier', 'event inbox committed before ack');
+  const eventId = parked['eventId'] as string;
+  const [row] = await q('SELECT envelope, wallet_id FROM outbox_events WHERE event_id=?', [eventId]);
+  expect(row).toBeDefined();
+  const walletId = row!['wallet_id'] as string;
+  const financialBefore = await walletState(orm, walletId);
+  const inboxRow = () => q('SELECT consumer_name, event_id, envelope_hash FROM wager_event_inbox WHERE consumer_name=? AND event_id=?', [EVENT_INBOX_CONSUMER, eventId]);
+  const inboxBefore = await inboxRow();
+  expect(inboxBefore).toHaveLength(1);
+  expect(crashing.of('event')).toEqual([]);
+  expect((await queueDepth(events.url)).inFlight).toBe(1);
+  const originalPhysicalId = crashing.of('received').find(line => line['eventId'] === eventId)!['sqsMessageId'];
+  expect(originalPhysicalId).toBeDefined();
+  const killed = await sigkill(crashing);
+
+  const restarted = spawnWorker('event-inbox-restarted', 'event-consumer-worker.ts');
+  await ready(restarted);
   await waitUntil(async () => {
-    consumed.push(...await consumer.pollOnce());
-    return new Set(consumed.filter(c => c.disposition === 'ACKNOWLEDGED').map(c => c.eventId)).size === total ? true : undefined;
-  }, `${total} events on wager-events`, 60_000);
-  // Outra leitura vazia verifica que não restou duplicata tardia na fila.
-  consumed.push(...await consumer.pollOnce());
-  expect(consumed.filter(c => c.disposition !== 'ACKNOWLEDGED')).toEqual([]);
-  expect(consumed).toHaveLength(total);
-  expect(consumed.filter(c => c.disposition === 'ACKNOWLEDGED' && c.duplicate)).toEqual([]);
+    const acks = restarted.of('event').filter(line => line['disposition'] === 'ACKNOWLEDGED');
+    return new Set(acks.map(line => line['eventId'])).size === total ? true : undefined;
+  }, 'all durable events acknowledged after the consumer restart', 90_000);
+  const redelivered = restarted.of('event').find(line => line['eventId'] === eventId)!;
+  expect(redelivered).toMatchObject({ disposition: 'ACKNOWLEDGED', duplicate: true });
+  expect(redelivered['receiveCount']).toBeGreaterThanOrEqual(2);
+  expect(await inboxRow()).toEqual(inboxBefore);
+  expect(await walletState(orm, walletId)).toEqual(financialBefore);
+  await restarted.stop();
+
+  // Mesmo envelope/eventId, outro MessageDeduplicationId: não depende de esperar 5 min nem da dedup FIFO.
+  const forced = await client.send(new SendMessageCommand({ QueueUrl: events.url, MessageBody: JSON.stringify(row!['envelope']),
+    MessageGroupId: walletId, MessageDeduplicationId: randomUUID() }));
+  expect(forced.MessageId).toBeDefined();
+  expect(forced.MessageId).not.toBe(originalPhysicalId);
+  const recreated = spawnWorker('event-inbox-recreated-again', 'event-consumer-worker.ts');
+  await ready(recreated);
+  await recreated.waitFor(line => line['type'] === 'event' && line['eventId'] === eventId, 'forced logical event redelivery');
+  expect(recreated.of('event')).toEqual([expect.objectContaining({ eventId, disposition: 'ACKNOWLEDGED', duplicate: true })]);
+  expect(recreated.of('received')[0]!['sqsMessageId']).toBe(forced.MessageId);
+  expect(recreated.pid).not.toBe(restarted.pid);
+  expect(await inboxRow()).toEqual(inboxBefore);
+  expect(await walletState(orm, walletId)).toEqual(financialBefore);
   const [inbox] = await q(`SELECT count(*)::int n,
-      count(*) FILTER (WHERE event_id NOT IN (SELECT event_id FROM outbox_events))::int unknown FROM wager_event_inbox`);
+    count(*) FILTER (WHERE event_id NOT IN (SELECT event_id FROM outbox_events))::int unknown FROM wager_event_inbox`);
   expect(inbox).toEqual({ n: total, unknown: 0 });
+  expect(crashing.of('accepted').filter(line => line['eventId'] === eventId && line['duplicate'] === false)).toHaveLength(1);
   expect(await queueDepth(events.url)).toEqual({ visible: 0, inFlight: 0 });
   expect(await queueDepth(events.dlqUrl)).toEqual({ visible: 0, inFlight: 0 });
   expect(await queueDepth(commands.dlqUrl)).toEqual({ visible: 0, inFlight: 0 });
-  proof('events-delivered-once', { outboxEvents: total, delivered: consumed.length, duplicates: 0 });
-}, 90_000);
+  const targetReceives = [crashing, restarted, recreated].flatMap(child => child.of('received'))
+    .filter(line => line['eventId'] === eventId);
+  expect(new Set(targetReceives.map(line => line['sqsMessageId'])).size).toBe(2);
+  expect(targetReceives.length).toBeGreaterThanOrEqual(3);
+  await recreated.stop();
+  proof('event-inbox-crash-and-forced-redelivery', { killed, outboxEvents: total, targetEvent: eventId,
+    physicalMessagesForTarget: 2, observedTargetReceives: targetReceives.length, durableAcceptances: inboxBefore.length,
+    restartedDuplicate: true, recreatedDuplicate: true, fifoDedupBypassed: true, financialStateUnchanged: true,
+    scope: 'durable acceptance in the demonstrative event inbox; no arbitrary external side effect is tested' });
+}, 150_000);
 
 const countBy = <T>(values: readonly T[]) => values.reduce((map, value) => map.set(value, (map.get(value) ?? 0) + 1), new Map<T, number>());

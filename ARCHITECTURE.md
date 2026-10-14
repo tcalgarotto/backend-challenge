@@ -232,7 +232,7 @@ Estrutura: `src/wallet/{domain,application,http,infrastructure}`, `src/wagering/
 
 **Entrega.** At-least-once: um evento pode ser reenviado depois de SendMessage e antes de `markPublished`, ou após lease perdido. O token impede que um worker antigo altere um claim novo, mas não cancela um envio já em rede; o consumidor deduplica por eventId e `walletVersion` permite detectar lacunas.
 
-**Consumidor de referência.** `SqsEventConsumer` e a tabela `wager_event_inbox` implementam um consumidor downstream que deduplica eventId de forma durável. Ele não é composto no runtime (o serviço publica; quem consome é outro sistema); existe para provar, nos testes de integração, recuperação e matriz, que duplicatas da outbox são seguras para o consumidor.
+**Consumidor de referência.** `SqsEventConsumer` e a tabela `wager_event_inbox` implementam um consumidor downstream que deduplica eventId de forma durável. Ele não é composto no runtime (o serviço publica; quem consome é outro sistema). Seu efeito demonstrativo é registrar uma aceitação durável; um handler externo com efeito próprio precisa de confirmação atômica com sua inbox ou de outra fronteira idempotente. A prova combina dedup FIFO (janela de 5 min) + inbox do consumidor e força uma reentrega do mesmo envelope com novo ID de dedup, inclusive após SIGKILL e recriação do processo. Não promete entrega única: [cenários e limites da prova](docs/workers.md#crash-reentrega-e-limites-da-prova).
 
 **Intervalo dos workers.** O intervalo padrão de 250 ms não pausa lotes cheios: o consumer continua imediatamente quando as 10 mensagens recebidas são confirmadas, e a outbox quando o lote está cheio e todo publicado. Lotes vazios, parciais ou com falha voltam à pausa.
 

@@ -267,3 +267,14 @@ Atalho para `bash scripts/reproduce/reproduce.sh`; `--matrix-only` roda a matriz
 ### Integridade do pacote
 
 O `.delivery-manifest.json` do pacote lista o SHA-256 de cada arquivo em `fileSha256`. `sourceCommit` e `generatorSha256` identificam a origem da exportação; não são revisões consultáveis no Git do pacote, que tem um único commit. O manifesto não assina a procedência nem substitui os testes.
+
+
+## Crash, reentrega e limites da prova
+
+A publicação é **at-least-once**. Um SIGKILL depois de `SendMessage` e antes de `markPublished` deixa a outbox pendente: outro processo recupera o lease e reenvia o mesmo `eventId`. Quando isso ocorre dentro da janela de cinco minutos com o mesmo `MessageDeduplicationId`, o FIFO pode suprimir o novo enfileiramento. Essa observação é limitada à janela e não prova entrega única.
+
+A defesa de efeito único combina **dedup do FIFO (janela de 5 min) + inbox persistente do consumidor**. A inbox protege a identidade lógica quando há reentrega efetiva; a correção financeira não depende da janela FIFO. A suíte [recovery.test.ts](../tests/recovery/crash/recovery.test.ts) usa PostgreSQL e SQS reais e três barreiras controladas: commit financeiro antes do ack, envio antes da marcação da outbox e commit da inbox de eventos antes do ack. O pai confirma o estado no banco e aplica SIGKILL, sem handler de encerramento. Processos novos recuperam a operação ou a mensagem.
+
+O teste explícito de comandos envia o mesmo corpo e `messageId` duas vezes, mudando somente o ID de deduplicação do broker no segundo envio. Ele confirma dois IDs físicos do SQS, recria o worker e verifica uma transação, uma inbox, um débito, saldo 90,00, ledger com abertura + débito e outbox inalterada. No caso de eventos, o consumidor morre após inserir a inbox; após a recuperação, uma reentrega adicional do mesmo envelope/`eventId` com ID de dedup diferente força outro enfileiramento. São duas mensagens físicas e pelo menos três leituras do evento-alvo, com uma aceitação durável, duplicatas reconhecidas e estado financeiro do produtor inalterado.
+
+**Limite:** o consumidor demonstrativo de eventos só registra aceitação na `wager_event_inbox`; não aplica um crédito em outro sistema. A prova não garante execução única de um handler arbitrário, de pagamentos externos ou de transporte SQS, nem mede AWS em produção ou expiração real da janela: o bypass foi provocado por um ID de dedup diferente. Um assinante com efeito próprio precisa confirmá-lo atomicamente com sua inbox ou usar outra fronteira durável/idempotente. Os SIGKILL cobrem os pontos descritos, não todas as falhas possíveis.
