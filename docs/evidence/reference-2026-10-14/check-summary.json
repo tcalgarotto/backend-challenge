@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "9eae78972477b528714f85f8e66631668f8b4e96",
+  "suite": "check",
+  "command": "bun run check",
+  "startedAtBrt": "2026-10-14T02:58:40-03:00",
+  "finishedAtBrt": "2026-10-14T02:58:54-03:00",
+  "exitCode": 0,
+  "testsPassed": 135,
+  "testsFailed": 0,
+  "assertions": 925,
+  "unitTestsPassed": 133,
+  "unitAssertions": 920,
+  "smokeTestsPassed": 2,
+  "smokeAssertions": 5,
+  "typecheckPassed": true,
+  "buildPassed": true
+}

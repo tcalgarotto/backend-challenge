@@ -28,7 +28,7 @@ Wallet, ledger, inbox e outbox usam PostgreSQL para confirmar o efeito financeir
 SQS é acessado depois do commit; a entrega pode repetir e exige deduplicação persistente.\
 `ApplicationWorkers.start` inicia consumer, publisher e scheduler; o consumo downstream de eventos é uma responsabilidade separada.
 
-Fontes: [src/wagering/http/wagering.module.ts:20](src/wagering/http/wagering.module.ts#L20), [src/wagering/application/process-wager.ts:85](src/wagering/application/process-wager.ts#L85), [src/runtime/workers.ts:35](src/runtime/workers.ts#L35).
+Fontes: [src/wagering/http/wagering.module.ts:20](src/wagering/http/wagering.module.ts#L20), [src/wagering/application/process-wager.ts:88](src/wagering/application/process-wager.ts#L88), [src/runtime/workers.ts:35](src/runtime/workers.ts#L35).
 
 Adapters dependem da aplicação; a aplicação depende do domínio e de portas; a infraestrutura implementa as portas. Classes de domínio não têm decorators de framework nem de ORM. `WagerApplicationService` concentra decisões, snapshots e eventos para HTTP, SQS e scheduler; `WalletLedgerEntry`, `InboxMessage` e `OutboxMessage` participam das escritas reais.
 
@@ -312,7 +312,7 @@ A matriz sobe processos reais (APIs, workers, publishers e schedulers). `Child.s
 
 ### Retomada dos dependentes de PENDING_REFERENCE
 
-O trigger `jwp_schedule_pending_reference` cria o job na mesma transação da pendência, com primeira tentativa após um segundo. `ApplicationWorkers.start` mantém o loop de `SqlPendingReferenceScheduler.runOnce`, que busca os jobs vencidos; cada tentativa reconsulta a referência por provedor/identidade externa sob lock da wallet. A referência que chegou entre duas tentativas será observada na próxima consulta: não existe notificação imediata ou despertador por evento SQS. O custo é polling e atraso de até o próximo backoff, limitado ao vencimento. Prova: [src/persistence/migrations/Migration202610120005.ts:46](src/persistence/migrations/Migration202610120005.ts#L46), [src/messaging/pending-reference-scheduler.ts:126](src/messaging/pending-reference-scheduler.ts#L126) e `tests/integration/messaging/pending-reference-scheduler.test.ts`, teste `two workers claim once, persist backoff, then a restarted worker resolves the out-of-order reference exactly once`.
+O trigger `jwp_schedule_pending_reference` cria o job na mesma transação da pendência, com primeira tentativa após um segundo. `ApplicationWorkers.start` mantém o loop de `SqlPendingReferenceScheduler.runOnce`, que busca os jobs vencidos; cada tentativa reconsulta a referência por provedor/identidade externa sob lock da wallet. A referência que chegou entre duas tentativas será observada na próxima consulta: não existe notificação imediata ou despertador por evento SQS. O custo é polling e atraso de até o próximo backoff, limitado ao vencimento. Prova: [src/persistence/migrations/Migration202610120005.ts:46](src/persistence/migrations/Migration202610120005.ts#L46), [src/messaging/pending-reference-scheduler.ts:127](src/messaging/pending-reference-scheduler.ts#L127) e `tests/integration/messaging/pending-reference-scheduler.test.ts`, teste `two workers claim once, persist backoff, then a restarted worker resolves the out-of-order reference exactly once`.
 
 ### Configuração de boot e limites do logger
 
@@ -365,7 +365,7 @@ O lock antecede a leitura da identidade e a decisão do saldo, serializando os e
 A ordem de escrita real é wager, wallet/ledger quando há movimento, depois outbox; todos são confirmados juntos.\
 Replay não cria efeito adicional; payload diferente retorna 409, e só depois do commit há resposta de sucesso.
 
-Fontes: [src/wagering/http/wagering.module.ts:20](src/wagering/http/wagering.module.ts#L20), [src/wagering/application/process-wager.ts:46](src/wagering/application/process-wager.ts#L46), [src/wagering/application/process-wager.ts:153](src/wagering/application/process-wager.ts#L153), [src/wagering/infrastructure/sql-process-wager-store.ts:59](src/wagering/infrastructure/sql-process-wager-store.ts#L59), [src/wagering/infrastructure/sql-process-wager-store.ts:116](src/wagering/infrastructure/sql-process-wager-store.ts#L116). O caminho HTTP usa `EntityManager.transactional` diretamente; `runSqlTransaction` é usado pelo adapter de inbox e pela auditoria de falha permanente, não pelo caminho HTTP normal.
+Fontes: [src/wagering/http/wagering.module.ts:20](src/wagering/http/wagering.module.ts#L20), [src/wagering/application/process-wager.ts:48](src/wagering/application/process-wager.ts#L48), [src/wagering/application/process-wager.ts:153](src/wagering/application/process-wager.ts#L153), [src/wagering/infrastructure/sql-process-wager-store.ts:60](src/wagering/infrastructure/sql-process-wager-store.ts#L60), [src/wagering/infrastructure/sql-process-wager-store.ts:117](src/wagering/infrastructure/sql-process-wager-store.ts#L117). O caminho HTTP usa `EntityManager.transactional` diretamente; `runSqlTransaction` é usado pelo adapter de inbox e pela auditoria de falha permanente, não pelo caminho HTTP normal.
 
 ### Publisher da outbox
 
@@ -484,7 +484,7 @@ O backoff parte de 1 s, dobra com jitter e tem teto de 60 s, sem ultrapassar o v
 No limite do TTL, a referência é reconsultada sob lock antes da rejeição; uma referência já aplicável pode vencer essa corrida.\
 REFERENCE_EXPIRED é terminal, não reabre; concorrência entre reversões é revalidada sob o mesmo lock da wallet.
 
-Fontes: [src/persistence/migrations/Migration202610120005.ts:46](src/persistence/migrations/Migration202610120005.ts#L46), [src/messaging/pending-reference-scheduler.ts:126](src/messaging/pending-reference-scheduler.ts#L126), [src/messaging/pending-reference-scheduler.ts:173](src/messaging/pending-reference-scheduler.ts#L173), [src/messaging/pending-reference-scheduler.ts:297](src/messaging/pending-reference-scheduler.ts#L297), [src/wagering/application/process-wager.ts:85](src/wagering/application/process-wager.ts#L85). Referência inválida/terminal pode rejeitar antes do TTL; o desenho mostra o caso de ausência e chegada fora de ordem.
+Fontes: [src/persistence/migrations/Migration202610120005.ts:46](src/persistence/migrations/Migration202610120005.ts#L46), [src/messaging/pending-reference-scheduler.ts:127](src/messaging/pending-reference-scheduler.ts#L127), [src/messaging/pending-reference-scheduler.ts:174](src/messaging/pending-reference-scheduler.ts#L174), [src/messaging/pending-reference-scheduler.ts:298](src/messaging/pending-reference-scheduler.ts#L298), [src/wagering/application/process-wager.ts:88](src/wagering/application/process-wager.ts#L88). Referência inválida/terminal pode rejeitar antes do TTL; o desenho mostra o caso de ausência e chegada fora de ordem.
 
 ### Estados da transação
 
@@ -509,7 +509,7 @@ Reagendamento altera o job, não cria uma nova transição nem repete o evento d
 Estados terminais são imutáveis; replay devolve o snapshot e não reaplica a transição.\
 FAILED exige diagnóstico permanente conhecido e auditoria; indisponibilidade transitória fica em retry.
 
-Fontes: [src/wagering/domain/wager-transaction.ts:298](src/wagering/domain/wager-transaction.ts#L298), [src/wagering/application/process-wager.ts:86](src/wagering/application/process-wager.ts#L86), [src/messaging/pending-reference-scheduler.ts:285](src/messaging/pending-reference-scheduler.ts#L285).
+Fontes: [src/wagering/domain/wager-transaction.ts:298](src/wagering/domain/wager-transaction.ts#L298), [src/wagering/application/process-wager.ts:90](src/wagering/application/process-wager.ts#L90), [src/messaging/pending-reference-scheduler.ts:285](src/messaging/pending-reference-scheduler.ts#L285).
 
 ## Desvios do esqueleto do enunciado
 

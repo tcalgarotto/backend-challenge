@@ -1,0 +1,774 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "9eae78972477b528714f85f8e66631668f8b4e96",
+  "suite": "integration",
+  "command": "bun run test:integration",
+  "isolation": "JWP_REPRO_SUFFIX and dedicated JWP_REPRO_*_PORT values (single run, nothing heavy in parallel)",
+  "startedAtBrt": "2026-10-14T02:58:54-03:00",
+  "finishedAtBrt": "2026-10-14T03:05:52-03:00",
+  "exitCode": 0,
+  "steps": 83,
+  "failedSteps": 0,
+  "testsPassed": 438,
+  "testsFailed": 0,
+  "assertions": 4251,
+  "recomputedFromStepLogs": {
+    "testsPassed": 438,
+    "testsFailed": 0,
+    "assertions": 4251
+  },
+  "attempts": 1,
+  "verdictLine": "REPRODUCE: ALL STEPS AS EXPECTED",
+  "counting": "Counts include only expected-success steps; deliberate no-infrastructure failures are reported separately in stepResults.",
+  "stepResults": [
+    {
+      "commandLabel": "bun install --frozen-lockfile",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "bun run check (typecheck, unit, build, smoke)",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 13.0,
+      "testsPassed": 135,
+      "testsFailed": 0,
+      "assertions": 925
+    },
+    {
+      "commandLabel": "static: no .skip/.only/.todo/.if in suites",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "static: messaging JSON Schema contracts (no infra needed)",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0,
+      "testsPassed": 44,
+      "testsFailed": 0,
+      "assertions": 44
+    },
+    {
+      "commandLabel": "no-infra fails: tests/matrix/delivery/matrix.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/schema/financial-schema.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/schema/messaging-migrations.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/schema/schema-drift.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/wallet/open-wallet.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/wager/process-wager.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/wager/review-regressions.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/wager/permanent-failure.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/query/query-reconcile.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/query/query-outage.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/query/compiled-runtime.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/sqs/sqs.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/messaging/sqs-inbox.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/messaging/inbox/audit-regressions.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/messaging/outbox/outbox-publisher.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/messaging/outbox/audit-regressions.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/messaging/pending-reference-scheduler.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/messaging/scheduler/audit-regressions.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/messaging/consumer-resilience.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/runtime/workers-entrypoint.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/runtime/consumer-backlog.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/observability/readiness.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/observability/http-observability.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/integration/observability/messaging-observability.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/concurrency/multi-process/multi-process.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0
+    },
+    {
+      "commandLabel": "no-infra fails: tests/recovery/crash/recovery.test.ts",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0
+    },
+    {
+      "commandLabel": "matrix fails with unreachable PG/SQS",
+      "expectedResult": "fail",
+      "exitCode": 1,
+      "verdict": "PASS",
+      "elapsedSeconds": 6.0
+    },
+    {
+      "commandLabel": "compose down -v (previous jwp-repro-w066 state)",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "compose up db+sqs --wait",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 16.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "versions: postgres",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "versions: localstack",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 0.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "versions: sqs topology from init hook",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "matrix: tests/matrix/delivery",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 18.0,
+      "testsPassed": 15,
+      "testsFailed": 0,
+      "assertions": 603
+    },
+    {
+      "commandLabel": "provision jwp-schema-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/schema/financial-schema.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0,
+      "testsPassed": 18,
+      "testsFailed": 0,
+      "assertions": 240
+    },
+    {
+      "commandLabel": "provision jwp-schemadrift-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/schema/schema-drift.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0,
+      "testsPassed": 22,
+      "testsFailed": 0,
+      "assertions": 38
+    },
+    {
+      "commandLabel": "provision jwp-msgschema-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/schema/messaging-migrations.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 8,
+      "testsFailed": 0,
+      "assertions": 61
+    },
+    {
+      "commandLabel": "provision jwp-wallet-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/wallet",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 3.0,
+      "testsPassed": 12,
+      "testsFailed": 0,
+      "assertions": 113
+    },
+    {
+      "commandLabel": "provision jwp-wager-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/wager/process-wager.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 23.0,
+      "testsPassed": 26,
+      "testsFailed": 0,
+      "assertions": 217
+    },
+    {
+      "commandLabel": "provision jwp-wagerfix-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/wager/review-regressions.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 4.0,
+      "testsPassed": 6,
+      "testsFailed": 0,
+      "assertions": 71
+    },
+    {
+      "commandLabel": "provision jwp-wagerfix-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/wager/permanent-failure.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 11.0,
+      "testsPassed": 6,
+      "testsFailed": 0,
+      "assertions": 61
+    },
+    {
+      "commandLabel": "provision jwp-query-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/query/query-reconcile.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 3.0,
+      "testsPassed": 8,
+      "testsFailed": 0,
+      "assertions": 209
+    },
+    {
+      "commandLabel": "provision jwp-query-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/query/query-outage.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 5.0,
+      "testsPassed": 1,
+      "testsFailed": 0,
+      "assertions": 31
+    },
+    {
+      "commandLabel": "provision jwp-query-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/query/compiled-runtime.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 4.0,
+      "testsPassed": 4,
+      "testsFailed": 0,
+      "assertions": 57
+    },
+    {
+      "commandLabel": "regression: tests/integration/sqs",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 3.0,
+      "testsPassed": 55,
+      "testsFailed": 0,
+      "assertions": 96
+    },
+    {
+      "commandLabel": "provision jwp-inbox-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/messaging/sqs-inbox.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 8.0,
+      "testsPassed": 11,
+      "testsFailed": 0,
+      "assertions": 70
+    },
+    {
+      "commandLabel": "provision jwp-inbox-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/messaging/inbox",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0,
+      "testsPassed": 1,
+      "testsFailed": 0,
+      "assertions": 3
+    },
+    {
+      "commandLabel": "provision jwp-resilience-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/messaging/consumer-resilience.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 73.0,
+      "testsPassed": 5,
+      "testsFailed": 0,
+      "assertions": 49
+    },
+    {
+      "commandLabel": "provision jwp-outbox-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/messaging/outbox/outbox-publisher.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 3.0,
+      "testsPassed": 4,
+      "testsFailed": 0,
+      "assertions": 47
+    },
+    {
+      "commandLabel": "provision jwp-outbox-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/messaging/outbox/audit-regressions.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 11.0,
+      "testsPassed": 10,
+      "testsFailed": 0,
+      "assertions": 70
+    },
+    {
+      "commandLabel": "provision jwp-scheduler-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/messaging/pending-reference-scheduler.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0,
+      "testsPassed": 6,
+      "testsFailed": 0,
+      "assertions": 54
+    },
+    {
+      "commandLabel": "provision jwp-scheduler-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/messaging/scheduler",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 7.0,
+      "testsPassed": 11,
+      "testsFailed": 0,
+      "assertions": 118
+    },
+    {
+      "commandLabel": "provision observability SQS (jwp-observability-repro-w066)",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 16.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "provision jwp-observability-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/observability",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 11.0,
+      "testsPassed": 12,
+      "testsFailed": 0,
+      "assertions": 321
+    },
+    {
+      "commandLabel": "provision jwp-concurrency-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/concurrency/multi-process",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 18.0,
+      "testsPassed": 7,
+      "testsFailed": 0,
+      "assertions": 488
+    },
+    {
+      "commandLabel": "provision jwp-recovery-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/recovery/crash",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 76.0,
+      "testsPassed": 5,
+      "testsFailed": 0,
+      "assertions": 150
+    },
+    {
+      "commandLabel": "provision jwp-runtime-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 2.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/runtime/workers-entrypoint.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 13.0,
+      "testsPassed": 5,
+      "testsFailed": 0,
+      "assertions": 57
+    },
+    {
+      "commandLabel": "provision jwp-consumer-w066-repro",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 1.0,
+      "testsPassed": 0,
+      "testsFailed": 0,
+      "assertions": 0
+    },
+    {
+      "commandLabel": "regression: tests/integration/runtime/consumer-backlog.test.ts",
+      "expectedResult": "pass",
+      "exitCode": 0,
+      "verdict": "PASS",
+      "elapsedSeconds": 6.0,
+      "testsPassed": 1,
+      "testsFailed": 0,
+      "assertions": 58
+    }
+  ]
+}

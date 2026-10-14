@@ -1,6 +1,6 @@
 # Estado do produto
 
-Atualização: 12/10/2026. Este documento descreve o que funciona hoje, como executar e quais são os limites conhecidos.
+Atualização: 14/10/2026. Este documento descreve o que funciona hoje, como executar e quais são os limites conhecidos.
 
 ## O que funciona
 
@@ -8,8 +8,9 @@ Atualização: 12/10/2026. Este documento descreve o que funciona hoje, como exe
 |---|---|
 | Operações | BET, WIN, LOSS, REFUND e ROLLBACK via HTTP e via SQS FIFO |
 | Dinheiro exato | Money em bigint (centavos); decimal string em HTTP/eventos, `numeric` no PostgreSQL; nunca `number` |
+| Multimoeda | BRL, USD e EUR com escala 2, uma wallet por player e moeda; allowlist opcional `JWP_ENABLED_CURRENCIES` validada no boot; moeda divergente da wallet é `CURRENCY_MISMATCH`/400 e desconhecida é `UNSUPPORTED_CURRENCY`/400 (JWP-ADR-016) |
 | Wallet, ledger e reconciliação | Ledger auditável; saldo = soma do ledger; consultas de wallet e transação |
-| Concorrência | Lock por wallet; wallets distintas processam em paralelo |
+| Concorrência | Lock por wallet com `LockMode.PESSIMISTIC_WRITE` (MikroORM, `SELECT ... FOR UPDATE`); wallets distintas processam em paralelo |
 | Idempotência | Persistente por `provider_id`/`Idempotency-Key`; replay devolve o snapshot terminal |
 | Reversão | No máximo uma reversão PROCESSED por referência (REFUND+ROLLBACK somados); segunda vira `ALREADY_REVERSED`/422 |
 | Mensageria | Inbox de comandos, outbox de eventos (at-least-once), scheduler de referências pendentes, retry/backoff e DLQ |
@@ -41,7 +42,7 @@ Verificação:
 
 ## Teste de carga
 
-Metodologia, resultados e ressalvas em [LOAD_TEST.md](LOAD_TEST.md). Medição local, uma rodada por configuração, sem meta de RPS nem SLA.
+Metodologia, resultados e ressalvas em [LOAD_TEST.md](LOAD_TEST.md). Medição local, uma rodada por configuração, sem meta de RPS nem SLA. A carga padrão já com `LockMode` e as execuções de referência de check e reprodução integral estão em [evidence/README.md](evidence/README.md).
 
 ## Regras de negócio relevantes
 
@@ -50,7 +51,7 @@ Metodologia, resultados e ressalvas em [LOAD_TEST.md](LOAD_TEST.md). Medição l
 
 ## Pacote de entrega
 
-A cópia de avaliação é gerada fora deste repositório e não inclui notas de processo.
+A cópia de avaliação é gerada fora deste repositório, a partir de um commit identificado, e contém o código, os testes, a documentação e as evidências publicadas em [evidence/](evidence/README.md).
 
 ## Limitações
 

@@ -27,8 +27,8 @@ function files(dir: string): string[] {
 
 test('detector reconhece formatos de credencial sem depender de valores reais', () => {
   const synthetic = 'crsr' + '_' + 'A1b2C3d4E5f6G7h8J9k0';
-  expect(credentialFindings(`agent --api-key ${synthetic}`)).toEqual(['provider-token', 'api-key-option']);
-  expect(credentialFindings('agent --api-key [REDACTED]')).toEqual([]);
+  expect(credentialFindings(`cli --api-key ${synthetic}`)).toEqual(['provider-token', 'api-key-option']);
+  expect(credentialFindings('cli --api-key [REDACTED]')).toEqual([]);
   expect(credentialFindings('postgresql://jwp:jwp_load_local@127.0.0.1/jwp')).toEqual([]);
 });
 

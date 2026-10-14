@@ -1,5 +1,22 @@
 # Evidências da execução de referência
 
+## Execução de referência de 14/10/2026
+
+Execução de referência atual de `bun run check` e `bun run test:integration`, sobre o código com multimoeda e `LockMode.PESSIMISTIC_WRITE`. Medida em 2026-10-14, das 02:58:40 às 03:05:52 BRT (America/Sao_Paulo), na mesma máquina descrita em [Ambiente](#ambiente), com o host compartilhado. Uma única execução de cada comando, sem outra carga pesada em paralelo; a reprodução usou sufixo e portas próprios (`JWP_REPRO_SUFFIX` e `JWP_REPRO_*_PORT`).
+
+- sourceCommit executado: `9eae78972477b528714f85f8e66631668f8b4e96`. As mudanças posteriores a esse commit são apenas de documentação e evidências.
+
+| Comando | Resultado medido | Exit code | Evidência |
+|---|---|---:|---|
+| bun run check | 133 unidade + 2 smoke, 0 falhas, 925 asserções (920 + 5); typecheck/build passaram | 0 | [reference-2026-10-14/check-summary.json](reference-2026-10-14/check-summary.json) |
+| bun run test:integration | 83 etapas conforme esperado; 438 testes positivos, 0 falhas, 4251 asserções | 0 | [reference-2026-10-14/integration-summary.json](reference-2026-10-14/integration-summary.json) |
+
+As duas execuções passaram na primeira tentativa; não houve reexecução. As contagens da reprodução foram recalculadas a partir dos logs de cada etapa e coincidem com o total impresso pelo script (campo `recomputedFromStepLogs`). Os JSONs trazem só resultados agregados e o veredito de cada etapa, sem caminhos do host nem credenciais.
+
+## Execução de referência de 13/10/2026 (histórico)
+
+As seções abaixo descrevem a execução publicada anteriormente, preservada como histórico. Ela antecede a multimoeda; as contagens de check e reprodução integral atuais são as da seção anterior. Compose e carga padrão continuam sendo as medições publicadas desta execução.
+
 Resultados medidos em 2026-10-13T19:32:29.548025-03:00 até 2026-10-13T19:41:57.802879-03:00, BRT (America/Sao_Paulo). Os JSONs desta pasta acompanham o pacote público. São resumos dos comandos concluídos, não resultados planejados.
 
 ## Identidade do código
@@ -30,13 +47,13 @@ Resultados medidos em 2026-10-13T19:32:29.548025-03:00 até 2026-10-13T19:41:57.
 | bun run test:compose | 18/18 checks; 3 réplicas e limpeza concluída | 0 | [compose/summary.json](compose/summary.json) |
 | bun run test:load | 17/17 invariantes; todos os processos encerrados com 0 | 0 | [load/summary.json](load/summary.json), [load/results.json](load/results.json) |
 
-A primeira tentativa integral não passou: 80 etapas, 397 testes positivos, 2 falhas e 4015 asserções, exit 1. M14 e seu hook de limpeza excederam timeout. A causa não foi estabelecida; o produto e os testes não foram alterados antes da segunda reprodução. Preservamos [o resumo dessa tentativa](integration/attempt-1-summary.json). A tabela acima apresenta a segunda reprodução integral, sem omitir a primeira. A causa foi identificada depois, no 058 (seção abaixo). O resumo da 1ª tentativa ganhou o campo `followUp` e mantém a classificação original.
+A primeira tentativa integral não passou: 80 etapas, 397 testes positivos, 2 falhas e 4015 asserções, exit 1. M14 e seu hook de limpeza excederam timeout. A causa não foi estabelecida; o produto e os testes não foram alterados antes da segunda reprodução. Preservamos [o resumo dessa tentativa](integration/attempt-1-summary.json). A tabela acima apresenta a segunda reprodução integral, sem omitir a primeira. A causa foi identificada depois (seção abaixo). O resumo da 1ª tentativa ganhou o campo `causeAnalysis` e mantém a classificação original.
 
 As contagens da reprodução somam testes e asserções dos passos cuja expectativa é sucesso. As tentativas sem infraestrutura precisam falhar e têm seus exits/verdicts registrados separadamente. Não são falhas inesperadas nem testes omitidos.
 
 ## Causa da falha de M14 na 1ª tentativa
 
-Identificada depois desta execução, no 058. A correção alterou só o harness de testes, não o produto.
+Identificada depois desta execução. A correção alterou só o harness de testes, não o produto.
 
 - **Causa.** No helper `Child.stop()` da matriz, depois do exit do processo, a espera pelo fim dos pipes stdout/stderr não tinha prazo. O guarda SIGTERM→SIGKILL de 20 s não cobria essa espera. Na 1ª tentativa, o Bun informou "killed 3 dangling processes" no timeout de M14. O Bun 1.3.14 conta todos os subprocessos ainda vivos do arquivo, o que conferimos com um teste mínimo. Os 3 vivos eram as APIs, que M14 não para. Logo, os 7 workers já tinham saído e M14 estava preso nessa espera. O `afterAll` chamou `stop()` de novo, esperou o mesmo dreno até 120 s e não executou a limpeza (down das migrations e DROP ROLE).
 - **Limite da prova.** A causa foi deduzida dessa contagem; o travamento não foi reproduzido. Nenhum dos testes abaixo travou:
@@ -50,7 +67,7 @@ Identificada depois desta execução, no 058. A correção alterou só o harness
   - `AbortSignal.timeout` de 20 s nas chamadas HTTP da matriz, acima do budget de 15 s da TX da API.
   - Teste determinístico [child-stop.test.ts](../../tests/matrix/delivery/child-stop.test.ts) com um pipe que nunca chega ao EOF.
 - **Independência da causa.** A correção não depende do motivo de o EOF faltar. Qualquer espera de dreno agora termina em no máximo 5 s, deixa rastro e não bloqueia a limpeza. Nenhum timeout de teste foi aumentado.
-- **Resultados após a correção.** Matriz 20/20 com exit 0 (15 pass, 0 fail; M14 entre 95,79 e 129,63 ms, nenhum `child-drain-timeout` real). Reprodução integral 3/3 com exit 0 (80 etapas, 399 testes, 0 falhas; o teste a mais é o child-stop).
+- **Resultados após a correção.** A correção faz parte do código medido na [execução de referência de 14/10/2026](#execução-de-referência-de-14102026), cuja reprodução integral passou na primeira tentativa, com M14 e o teste child-stop incluídos (83 etapas, 438 testes, 0 falhas).
 - **Escopo das evidências.** A execução desta pasta é do sourceCommit acima. [product-tree.json](product-tree.json) continua descrevendo a árvore medida e não foi recalculado, pois os testes mudaram depois. Nenhum outro arquivo desta pasta tem manifesto de hash que inclua o resumo da 1ª tentativa.
 
 ## Carga padrão após LockMode
