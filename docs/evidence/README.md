@@ -13,9 +13,31 @@ Execução de referência atual de `bun run check` e `bun run test:integration`,
 
 As duas execuções passaram na primeira tentativa; não houve reexecução. As contagens da reprodução foram recalculadas a partir dos logs de cada etapa e coincidem com o total impresso pelo script (campo `recomputedFromStepLogs`). Os JSONs trazem só resultados agregados e o veredito de cada etapa, sem caminhos do host nem credenciais.
 
+## Carga da candidata final (14/10/2026)
+
+Referência atual de carga. Em 14/10/2026 a candidata final (commit `9679919`) foi medida com [scripts/load/final-candidate.sh](../../scripts/load/final-candidate.sh) nas políticas `per_type` e `per_reference` (3 réplicas HTTP + 3 workers, 32 VUs, 20 s), concluindo às 14:16 BRT (America/Sao_Paulo). As 17 invariantes financeiras passaram nas duas políticas, com 0% de erros. Distribuído: 583/543 req/s, p95 105/130 ms, p99 142/183 ms, contra 718 req/s, p95 93 ms e p99 235 ms na medição histórica de 13/10, anterior à multimoeda; SQS 1000 comandos a 109/88 msg/s (antes ~142). A queda de ~20–35% é compatível com o custo da multimoeda, mas a máquina era compartilhada e a comparação não é controlada.
+
+| Política | Cenário | Requisições | req/s | p50 / p95 / p99 (ms) | máx (ms) | Erros HTTP | Lag outbox p50 / p95 / p99 (ms) | Drenagem após carga (ms) |
+|---|---|---:|---:|---|---:|---:|---|---:|
+| per_type | distributed | 11696 | 583.5 | 50.3 / 104.9 / 142.4 | 225.2 | 0% | 19362 / 28368 / 29070.6 | 29326 |
+| per_type | hot-wallet | 2916 | 144.0 | 197.7 / 420.6 / 726.9 | 1081.3 | 0% | 18879.5 / 28456 / 28696.7 | 27974 |
+| per_type | hot-drain | 500 | 242.0 | 123.3 / 174.3 / 203 | 213.8 | 0% | 1141.5 / 1567 / 1594 | 754 |
+| per_reference | distributed | 10897 | 543.3 | 51.6 / 129.5 / 183 | 349.3 | 0% | 20720 / 28629.3 / 29696.3 | 29879 |
+| per_reference | hot-wallet | 3351 | 166.1 | 166.8 / 358.4 / 407.4 | 510.5 | 0% | 18677.5 / 35987.1 / 36760.8 | 36102 |
+| per_reference | hot-drain | 500 | 202.9 | 148.2 / 242.1 / 307.6 | 347.8 | 0% | 1159 / 1710 / 1746 | 1257 |
+
+| Política | SQS (1000 comandos) | Ponta a ponta p50 / p95 / p99 (ms) | Downstream | Invariantes | Exit dos 6 processos |
+|---|---|---|---|---|---|
+| per_type | 9.16 s, 109.1 msg/s | 4348 / 8542 / 8894 | 33349/33349 eventIds distintos, 0 duplicados, 0 faltantes | 17/17 | 0 |
+| per_reference | 11.36 s, 88.1 msg/s | 6186 / 10630 / 10971 | 32496/32496 eventIds distintos, 0 duplicados, 0 faltantes | 17/17 | 0 |
+
+As duas políticas tiveram desempenho equivalente dentro do ruído: cada uma rodou uma vez, em máquina compartilhada, e as diferenças (10–20%) vão para os dois lados (`per_type` à frente no distribuído, hot-drain e SQS; `per_reference` à frente no hot-wallet). O custo extra do `per_reference` é uma checagem indexada mais um advisory lock por referência no gatilho (`pg_advisory_xact_lock`); seu objetivo é impedir que REFUND seguido de ROLLBACK devolva a aposta duas vezes ([ADR-005](../../ARCHITECTURE.md#jwp-adr-005--referências-estados-e-política-de-reversão)), não ganhar desempenho.
+
+Mesma máquina descrita em [Ambiente](#ambiente), host compartilhado (média de carga de 1 min no início: 2.86 em `per_type` e 4.99 em `per_reference`). Uma rodada por política, sem SLA nem estimativa de capacidade AWS. Outputs: [run.json](load/final-2026-10-14/run.json); `per_type` [summary.md](load/final-2026-10-14/per_type/summary.md) e [results.json](load/final-2026-10-14/per_type/results.json); `per_reference` [summary.md](load/final-2026-10-14/per_reference/summary.md) e [results.json](load/final-2026-10-14/per_reference/results.json). Como na execução histórica, apenas as amostras de linhas de log foram omitidas dos results.json; o hash do bruto consta de `publication`.
+
 ## Execução de referência de 13/10/2026 (histórico)
 
-As seções abaixo descrevem a execução publicada anteriormente, preservada como histórico. Ela antecede a multimoeda; as contagens de check e reprodução integral atuais são as da seção anterior. Compose e carga padrão continuam sendo as medições publicadas desta execução.
+As seções abaixo descrevem a execução publicada anteriormente, preservada como histórico. Ela antecede a multimoeda; as contagens de check e reprodução integral atuais são as da seção anterior. Compose continua sendo a medição publicada desta execução; a carga padrão abaixo é histórica e foi substituída como referência pela [carga da candidata final](#carga-da-candidata-final-14102026).
 
 Resultados medidos em 2026-10-13T19:32:29.548025-03:00 até 2026-10-13T19:41:57.802879-03:00, BRT (America/Sao_Paulo). Os JSONs desta pasta acompanham o pacote público. São resumos dos comandos concluídos, não resultados planejados.
 

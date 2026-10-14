@@ -1,0 +1,916 @@
+{
+  "startedAt": "2026-10-14T17:13:39.663Z",
+  "finishedAt": "2026-10-14T17:16:19.393Z",
+  "loadavg1mAtEnd": 7.81,
+  "config": {
+    "replicas": 3,
+    "workers": 3,
+    "concurrency": 32,
+    "durationS": 20,
+    "warmupS": 5,
+    "wallets": 200,
+    "hotDrainBets": 500,
+    "hotDrainBalance": "100.00",
+    "sqsMessages": 1000,
+    "sqsWallets": 100,
+    "drainTimeoutS": 900,
+    "pgPort": 57432,
+    "sqsPort": 57566,
+    "project": "jwp-load-final",
+    "keepInfra": false
+  },
+  "environment": {
+    "gitCommit": "96799194a2ce4a49d24294108eea983ea80b56ea",
+    "gitDirtyFiles": 0,
+    "srcDirty": [],
+    "bun": "1.3.14",
+    "kernel": "7.0.0-38-generic",
+    "cpuModel": "11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz",
+    "logicalCpus": 16,
+    "memoryGiB": 15.4,
+    "loadavg1mAtStart": 4.99,
+    "docker": "29.1.3",
+    "otherRunningContainers": 8,
+    "postgres": "17.6",
+    "localstackImage": "localstack/localstack:4.9.2",
+    "dbPoolPerReplica": 4,
+    "workerIntervalMs": 250
+  },
+  "scenarios": {
+    "http": [
+      {
+        "name": "distributed",
+        "startedAt": "2026-10-14T17:14:14.680Z",
+        "concurrency": 32,
+        "replicas": 3,
+        "requests": 10897,
+        "elapsedS": 20.06,
+        "throughputRps": 543.3,
+        "latencyMs": {
+          "p50": 51.6,
+          "p95": 129.5,
+          "p99": 183,
+          "max": 349.3,
+          "mean": 58.8
+        },
+        "latencyMsHttp200": {
+          "p50": 51.6,
+          "p95": 129.5,
+          "p99": 183,
+          "max": 349.3,
+          "mean": 58.8
+        },
+        "errors": 0,
+        "errorRatePct": 0,
+        "httpStatus": {
+          "200": 10897
+        },
+        "kinds": {
+          "BET": 3639,
+          "WIN": 1824,
+          "LOSS": 1818,
+          "REFUND": 1814,
+          "ROLLBACK": 1802
+        },
+        "kindOutcomes": {
+          "BET:PROCESSED": 3639,
+          "WIN:PROCESSED": 1824,
+          "LOSS:PROCESSED": 1818,
+          "REFUND:PROCESSED": 1814,
+          "ROLLBACK:PROCESSED": 1802
+        },
+        "outcomes": {
+          "PROCESSED": 10897
+        },
+        "completedPerSecond": [
+          389,
+          467,
+          467,
+          373,
+          516,
+          622,
+          630,
+          706,
+          664,
+          617,
+          643,
+          526,
+          609,
+          575,
+          611,
+          646,
+          342,
+          458,
+          489,
+          515,
+          32
+        ],
+        "db": {
+          "outcomes": {
+            "PROCESSED": 10897
+          },
+          "clientVsDb": {
+            "definitive": {
+              "PROCESSED": 10897
+            },
+            "uncertain": 0,
+            "db": {
+              "PROCESSED": 10897
+            },
+            "ok": true,
+            "mismatches": []
+          }
+        },
+        "outbox": {
+          "drainAfterLoadMs": 29879,
+          "events": 19976,
+          "unpublished": 0,
+          "lagMs": {
+            "p50": 20720,
+            "p95": 28629.3,
+            "p99": 29696.3,
+            "max": 29892
+          },
+          "publishedPerS": 402
+        },
+        "cpuCoresBusyDuringLoad": {
+          "replicas": 4.73,
+          "postgres": 2.27,
+          "localstack": 0.98,
+          "loadGenerator": 0.46
+        },
+        "counters": {
+          "jwp_http_requests_total{method=\"POST\",route=\"/wagering/transactions\",status_code=\"200\"}": 10897,
+          "jwp_wager_transactions_total{channel=\"http\",status=\"PROCESSED\",kind=\"BET\"}": 3639,
+          "jwp_wager_transactions_total{channel=\"http\",status=\"PROCESSED\",kind=\"WIN\"}": 1824,
+          "jwp_wager_transactions_total{channel=\"http\",status=\"PROCESSED\",kind=\"LOSS\"}": 1818,
+          "jwp_wager_transactions_total{channel=\"http\",status=\"PROCESSED\",kind=\"REFUND\"}": 1814,
+          "jwp_wager_transactions_total{channel=\"http\",status=\"PROCESSED\",kind=\"ROLLBACK\"}": 1802
+        },
+        "dbSampling": {
+          "max": {
+            "outbox_pending": 14222,
+            "lock_waiters": 1,
+            "active_sessions": 8,
+            "waiting_on_lock": 1
+          },
+          "samples": 20,
+          "series": [
+            {
+              "t": 7,
+              "outbox_pending": 0,
+              "lock_waiters": 0,
+              "active_sessions": 1,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 1014,
+              "outbox_pending": 546,
+              "lock_waiters": 0,
+              "active_sessions": 5,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 2021,
+              "outbox_pending": 1125,
+              "lock_waiters": 0,
+              "active_sessions": 4,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 3028,
+              "outbox_pending": 1727,
+              "lock_waiters": 0,
+              "active_sessions": 7,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 4034,
+              "outbox_pending": 2187,
+              "lock_waiters": 0,
+              "active_sessions": 2,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 5040,
+              "outbox_pending": 2899,
+              "lock_waiters": 0,
+              "active_sessions": 1,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 6059,
+              "outbox_pending": 3788,
+              "lock_waiters": 1,
+              "active_sessions": 8,
+              "waiting_on_lock": 1
+            },
+            {
+              "t": 7066,
+              "outbox_pending": 4660,
+              "lock_waiters": 0,
+              "active_sessions": 4,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 8075,
+              "outbox_pending": 5632,
+              "lock_waiters": 0,
+              "active_sessions": 2,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 9082,
+              "outbox_pending": 6603,
+              "lock_waiters": 1,
+              "active_sessions": 4,
+              "waiting_on_lock": 1
+            },
+            {
+              "t": 10090,
+              "outbox_pending": 7435,
+              "lock_waiters": 1,
+              "active_sessions": 3,
+              "waiting_on_lock": 1
+            },
+            {
+              "t": 11098,
+              "outbox_pending": 8340,
+              "lock_waiters": 0,
+              "active_sessions": 5,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 12109,
+              "outbox_pending": 9071,
+              "lock_waiters": 0,
+              "active_sessions": 3,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 13121,
+              "outbox_pending": 9906,
+              "lock_waiters": 0,
+              "active_sessions": 2,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 14135,
+              "outbox_pending": 10693,
+              "lock_waiters": 0,
+              "active_sessions": 6,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 15149,
+              "outbox_pending": 11629,
+              "lock_waiters": 0,
+              "active_sessions": 3,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 16175,
+              "outbox_pending": 12469,
+              "lock_waiters": 0,
+              "active_sessions": 2,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 17192,
+              "outbox_pending": 12972,
+              "lock_waiters": 0,
+              "active_sessions": 3,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 18203,
+              "outbox_pending": 13591,
+              "lock_waiters": 1,
+              "active_sessions": 3,
+              "waiting_on_lock": 1
+            },
+            {
+              "t": 19215,
+              "outbox_pending": 14222,
+              "lock_waiters": 0,
+              "active_sessions": 3,
+              "waiting_on_lock": 0
+            }
+          ]
+        }
+      },
+      {
+        "name": "hot-wallet",
+        "startedAt": "2026-10-14T17:15:04.948Z",
+        "concurrency": 32,
+        "replicas": 3,
+        "requests": 3351,
+        "elapsedS": 20.18,
+        "throughputRps": 166.1,
+        "latencyMs": {
+          "p50": 166.8,
+          "p95": 358.4,
+          "p99": 407.4,
+          "max": 510.5,
+          "mean": 191.8
+        },
+        "latencyMsHttp200": {
+          "p50": 166.8,
+          "p95": 358.4,
+          "p99": 407.4,
+          "max": 510.5,
+          "mean": 191.8
+        },
+        "errors": 0,
+        "errorRatePct": 0,
+        "httpStatus": {
+          "200": 3351
+        },
+        "kinds": {
+          "BET": 1125,
+          "WIN": 565,
+          "LOSS": 562,
+          "REFUND": 556,
+          "ROLLBACK": 543
+        },
+        "kindOutcomes": {
+          "BET:PROCESSED": 1125,
+          "WIN:PROCESSED": 565,
+          "LOSS:PROCESSED": 562,
+          "REFUND:PROCESSED": 556,
+          "ROLLBACK:PROCESSED": 543
+        },
+        "outcomes": {
+          "PROCESSED": 3351
+        },
+        "completedPerSecond": [
+          146,
+          117,
+          149,
+          139,
+          164,
+          154,
+          174,
+          177,
+          163,
+          161,
+          172,
+          175,
+          182,
+          179,
+          185,
+          183,
+          177,
+          176,
+          165,
+          181,
+          32
+        ],
+        "db": {
+          "outcomes": {
+            "PROCESSED": 3351
+          },
+          "clientVsDb": {
+            "definitive": {
+              "PROCESSED": 3351
+            },
+            "uncertain": 0,
+            "db": {
+              "PROCESSED": 3351
+            },
+            "ok": true,
+            "mismatches": []
+          }
+        },
+        "outbox": {
+          "drainAfterLoadMs": 36102,
+          "events": 6140,
+          "unpublished": 0,
+          "lagMs": {
+            "p50": 18677.5,
+            "p95": 35987.1,
+            "p99": 36760.8,
+            "max": 36969
+          },
+          "publishedPerS": 107.6
+        },
+        "cpuCoresBusyDuringLoad": {
+          "replicas": 2.14,
+          "postgres": 0.94,
+          "localstack": 0.66,
+          "loadGenerator": 0.52
+        },
+        "counters": {
+          "jwp_http_requests_total{method=\"POST\",route=\"/wagering/transactions\",status_code=\"200\"}": 3351,
+          "jwp_wager_transactions_total{channel=\"http\",status=\"PROCESSED\",kind=\"BET\"}": 1125,
+          "jwp_wager_transactions_total{channel=\"http\",status=\"PROCESSED\",kind=\"WIN\"}": 565,
+          "jwp_wager_transactions_total{channel=\"http\",status=\"PROCESSED\",kind=\"LOSS\"}": 562,
+          "jwp_wager_transactions_total{channel=\"http\",status=\"PROCESSED\",kind=\"REFUND\"}": 556,
+          "jwp_wager_transactions_total{channel=\"http\",status=\"PROCESSED\",kind=\"ROLLBACK\"}": 543
+        },
+        "dbSampling": {
+          "max": {
+            "outbox_pending": 3984,
+            "lock_waiters": 11,
+            "active_sessions": 14,
+            "waiting_on_lock": 11
+          },
+          "samples": 21,
+          "series": [
+            {
+              "t": 4,
+              "outbox_pending": 0,
+              "lock_waiters": 0,
+              "active_sessions": 1,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 1007,
+              "outbox_pending": 152,
+              "lock_waiters": 11,
+              "active_sessions": 13,
+              "waiting_on_lock": 11
+            },
+            {
+              "t": 2010,
+              "outbox_pending": 287,
+              "lock_waiters": 10,
+              "active_sessions": 12,
+              "waiting_on_lock": 10
+            },
+            {
+              "t": 3015,
+              "outbox_pending": 446,
+              "lock_waiters": 10,
+              "active_sessions": 11,
+              "waiting_on_lock": 10
+            },
+            {
+              "t": 4019,
+              "outbox_pending": 593,
+              "lock_waiters": 11,
+              "active_sessions": 14,
+              "waiting_on_lock": 11
+            },
+            {
+              "t": 5023,
+              "outbox_pending": 771,
+              "lock_waiters": 10,
+              "active_sessions": 12,
+              "waiting_on_lock": 10
+            },
+            {
+              "t": 6026,
+              "outbox_pending": 938,
+              "lock_waiters": 10,
+              "active_sessions": 12,
+              "waiting_on_lock": 10
+            },
+            {
+              "t": 7030,
+              "outbox_pending": 1136,
+              "lock_waiters": 11,
+              "active_sessions": 12,
+              "waiting_on_lock": 11
+            },
+            {
+              "t": 8036,
+              "outbox_pending": 1340,
+              "lock_waiters": 10,
+              "active_sessions": 12,
+              "waiting_on_lock": 10
+            },
+            {
+              "t": 9040,
+              "outbox_pending": 1530,
+              "lock_waiters": 11,
+              "active_sessions": 13,
+              "waiting_on_lock": 11
+            },
+            {
+              "t": 10045,
+              "outbox_pending": 1716,
+              "lock_waiters": 10,
+              "active_sessions": 11,
+              "waiting_on_lock": 10
+            },
+            {
+              "t": 11048,
+              "outbox_pending": 1920,
+              "lock_waiters": 11,
+              "active_sessions": 14,
+              "waiting_on_lock": 11
+            },
+            {
+              "t": 12052,
+              "outbox_pending": 2134,
+              "lock_waiters": 11,
+              "active_sessions": 12,
+              "waiting_on_lock": 11
+            },
+            {
+              "t": 13056,
+              "outbox_pending": 2356,
+              "lock_waiters": 10,
+              "active_sessions": 13,
+              "waiting_on_lock": 10
+            },
+            {
+              "t": 14068,
+              "outbox_pending": 2583,
+              "lock_waiters": 11,
+              "active_sessions": 13,
+              "waiting_on_lock": 11
+            },
+            {
+              "t": 15072,
+              "outbox_pending": 2819,
+              "lock_waiters": 11,
+              "active_sessions": 13,
+              "waiting_on_lock": 11
+            },
+            {
+              "t": 16076,
+              "outbox_pending": 3054,
+              "lock_waiters": 11,
+              "active_sessions": 14,
+              "waiting_on_lock": 11
+            },
+            {
+              "t": 17084,
+              "outbox_pending": 3281,
+              "lock_waiters": 11,
+              "active_sessions": 12,
+              "waiting_on_lock": 11
+            },
+            {
+              "t": 18088,
+              "outbox_pending": 3513,
+              "lock_waiters": 11,
+              "active_sessions": 14,
+              "waiting_on_lock": 11
+            },
+            {
+              "t": 19092,
+              "outbox_pending": 3739,
+              "lock_waiters": 9,
+              "active_sessions": 11,
+              "waiting_on_lock": 10
+            },
+            {
+              "t": 20097,
+              "outbox_pending": 3984,
+              "lock_waiters": 7,
+              "active_sessions": 10,
+              "waiting_on_lock": 7
+            }
+          ]
+        }
+      },
+      {
+        "name": "hot-drain",
+        "startedAt": "2026-10-14T17:16:02.343Z",
+        "concurrency": 32,
+        "replicas": 3,
+        "requests": 500,
+        "elapsedS": 2.46,
+        "throughputRps": 202.9,
+        "latencyMs": {
+          "p50": 148.2,
+          "p95": 242.1,
+          "p99": 307.6,
+          "max": 347.8,
+          "mean": 153
+        },
+        "latencyMsHttp200": {
+          "p50": 218.4,
+          "p95": 307.6,
+          "p99": 339.1,
+          "max": 347.8,
+          "mean": 212
+        },
+        "errors": 0,
+        "errorRatePct": 0,
+        "httpStatus": {
+          "200": 100,
+          "422": 400
+        },
+        "kinds": {
+          "BET": 500
+        },
+        "kindOutcomes": {
+          "BET:PROCESSED": 100,
+          "BET:REJECTED:INSUFFICIENT_FUNDS": 400
+        },
+        "outcomes": {
+          "PROCESSED": 100,
+          "REJECTED:INSUFFICIENT_FUNDS": 400
+        },
+        "completedPerSecond": [
+          150,
+          233,
+          117
+        ],
+        "db": {
+          "outcomes": {
+            "PROCESSED": 100,
+            "REJECTED:INSUFFICIENT_FUNDS": 400
+          },
+          "clientVsDb": {
+            "definitive": {
+              "PROCESSED": 100,
+              "REJECTED:INSUFFICIENT_FUNDS": 400
+            },
+            "uncertain": 0,
+            "db": {
+              "PROCESSED": 100,
+              "REJECTED:INSUFFICIENT_FUNDS": 400
+            },
+            "ok": true,
+            "mismatches": []
+          }
+        },
+        "outbox": {
+          "drainAfterLoadMs": 1257,
+          "events": 600,
+          "unpublished": 0,
+          "lagMs": {
+            "p50": 1159,
+            "p95": 1710,
+            "p99": 1746,
+            "max": 1751
+          },
+          "publishedPerS": 145.4
+        },
+        "cpuCoresBusyDuringLoad": {
+          "replicas": 2.24,
+          "postgres": 0.72,
+          "localstack": 0.73,
+          "loadGenerator": 0.54
+        },
+        "counters": {
+          "jwp_http_requests_total{method=\"POST\",route=\"/wagering/transactions\",status_code=\"200\"}": 100,
+          "jwp_http_requests_total{method=\"POST\",route=\"/wagering/transactions\",status_code=\"422\"}": 400,
+          "jwp_wager_transactions_total{channel=\"http\",status=\"PROCESSED\",kind=\"BET\"}": 100,
+          "jwp_wager_transactions_total{channel=\"http\",status=\"REJECTED\",kind=\"BET\"}": 400
+        },
+        "dbSampling": {
+          "max": {
+            "outbox_pending": 242,
+            "lock_waiters": 11,
+            "active_sessions": 13,
+            "waiting_on_lock": 11
+          },
+          "samples": 3,
+          "series": [
+            {
+              "t": 6,
+              "outbox_pending": 0,
+              "lock_waiters": 0,
+              "active_sessions": 2,
+              "waiting_on_lock": 0
+            },
+            {
+              "t": 1009,
+              "outbox_pending": 148,
+              "lock_waiters": 11,
+              "active_sessions": 13,
+              "waiting_on_lock": 11
+            },
+            {
+              "t": 2012,
+              "outbox_pending": 242,
+              "lock_waiters": 10,
+              "active_sessions": 11,
+              "waiting_on_lock": 10
+            }
+          ]
+        }
+      }
+    ],
+    "sqs": {
+      "name": "sqs",
+      "messages": 1000,
+      "wallets": 100,
+      "replicas": 3,
+      "sendS": 0.41,
+      "processed": 1000,
+      "elapsedS": 11.36,
+      "throughputMsgPerS": 88.1,
+      "endToEndLatencyMs": {
+        "p50": 6186,
+        "p95": 10630,
+        "p99": 10971,
+        "max": 11129,
+        "mean": 5746.8
+      },
+      "db": {
+        "outcomes": {
+          "PROCESSED": 1000
+        }
+      },
+      "outbox": {
+        "drainAfterLoadMs": 1,
+        "events": 2000,
+        "unpublished": 0,
+        "lagMs": {
+          "p50": 396,
+          "p95": 954,
+          "p99": 1141,
+          "max": 1411
+        },
+        "publishedPerS": 174.8
+      },
+      "cpuCoresBusyDuringLoad": {
+        "replicas": 2.12,
+        "postgres": 0.57,
+        "localstack": 0.94,
+        "loadGenerator": 0.43
+      },
+      "counters": {},
+      "dbSampling": {
+        "max": {
+          "outbox_pending": 100,
+          "lock_waiters": 0,
+          "active_sessions": 8,
+          "waiting_on_lock": 0
+        },
+        "samples": 12,
+        "series": [
+          {
+            "t": 12,
+            "outbox_pending": 0,
+            "lock_waiters": 0,
+            "active_sessions": 1,
+            "waiting_on_lock": 0
+          },
+          {
+            "t": 1015,
+            "outbox_pending": 68,
+            "lock_waiters": 0,
+            "active_sessions": 2,
+            "waiting_on_lock": 0
+          },
+          {
+            "t": 2019,
+            "outbox_pending": 91,
+            "lock_waiters": 0,
+            "active_sessions": 1,
+            "waiting_on_lock": 0
+          },
+          {
+            "t": 3022,
+            "outbox_pending": 88,
+            "lock_waiters": 0,
+            "active_sessions": 1,
+            "waiting_on_lock": 0
+          },
+          {
+            "t": 4026,
+            "outbox_pending": 76,
+            "lock_waiters": 0,
+            "active_sessions": 1,
+            "waiting_on_lock": 0
+          },
+          {
+            "t": 5030,
+            "outbox_pending": 100,
+            "lock_waiters": 0,
+            "active_sessions": 1,
+            "waiting_on_lock": 0
+          },
+          {
+            "t": 6033,
+            "outbox_pending": 95,
+            "lock_waiters": 0,
+            "active_sessions": 8,
+            "waiting_on_lock": 0
+          },
+          {
+            "t": 7037,
+            "outbox_pending": 96,
+            "lock_waiters": 0,
+            "active_sessions": 1,
+            "waiting_on_lock": 0
+          },
+          {
+            "t": 8040,
+            "outbox_pending": 70,
+            "lock_waiters": 0,
+            "active_sessions": 4,
+            "waiting_on_lock": 0
+          },
+          {
+            "t": 9047,
+            "outbox_pending": 98,
+            "lock_waiters": 0,
+            "active_sessions": 2,
+            "waiting_on_lock": 0
+          },
+          {
+            "t": 10051,
+            "outbox_pending": 68,
+            "lock_waiters": 0,
+            "active_sessions": 1,
+            "waiting_on_lock": 0
+          },
+          {
+            "t": 11056,
+            "outbox_pending": 54,
+            "lock_waiters": 0,
+            "active_sessions": 1,
+            "waiting_on_lock": 0
+          }
+        ]
+      }
+    }
+  },
+  "downstream": {
+    "outboxEvents": 32496,
+    "deliveries": 32496,
+    "distinctEventIds": 32496,
+    "duplicateEventIds": 0,
+    "missingEventIds": 0,
+    "unknownEventIds": 0,
+    "malformed": 0
+  },
+  "invariants": {
+    "checks": {
+      "balanceEqualsLedgerSum": true,
+      "balanceEqualsLastLedgerEntry": true,
+      "noNegativeBalance": true,
+      "noDuplicateLedgerEntry": true,
+      "everyProcessedHasLedger": true,
+      "noLedgerForUnprocessed": true,
+      "lossZeroWithoutReferenceOrLedger": true,
+      "loadReversalsMatchConfirmedBet": true,
+      "noNonTerminalLeft": true,
+      "outboxFullyPublished": true,
+      "reconciliationEndpointConsistent": true,
+      "hotDrainExactlyBalance": true,
+      "noDeadLetters": true,
+      "commandQueueDrained": true,
+      "httpMixedKindsProcessed": true,
+      "downstreamNoDuplicateEventId": true,
+      "downstreamReceivedEveryEvent": true
+    },
+    "passed": true,
+    "balances": {
+      "wallets": 302,
+      "balance_ne_ledger_sum": 0,
+      "negative_balances": 0
+    },
+    "lastEntryMismatch": 0,
+    "ledger": {
+      "duplicate_ledger_tx": 0,
+      "processed_without_ledger": 0,
+      "ledger_for_unprocessed": 0,
+      "loss_with_ledger": 0,
+      "invalid_loss": 0,
+      "bad_load_reversal": 0,
+      "non_terminal": 0,
+      "ledger_entries": 14858,
+      "transactions": 17638,
+      "outbox_unpublished": 0
+    },
+    "hotDrain": {
+      "balance": "0.00",
+      "processed_bets": 100,
+      "expectedProcessedBets": "100"
+    },
+    "reconciliation": {
+      "called": 302,
+      "consistent": 302
+    },
+    "queues": {
+      "commandsDlq": 0,
+      "eventsDlq": 0,
+      "commands": 0,
+      "events": 0
+    }
+  },
+  "replicaExitCodes": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "logs": {
+    "lines": 51451,
+    "warnErrorByTypeAndCode": {
+      "warn:http.request:": 400
+    }
+  },
+  "publication": {
+    "sourceCommit": "96799194a2ce4a49d24294108eea983ea80b56ea",
+    "timezone": "America/Sao_Paulo",
+    "rawResultsSha256": "74f06b3a96fcaa562dabac6230ba9b18abe4d8caf28b8ceac3a73c5fb451a311",
+    "sanitization": {
+      "omittedRawLogSamples": 50,
+      "financialMetricsChanged": false,
+      "reason": "Raw diagnostic log samples omitted; aggregate counts and every measured metric retained."
+    }
+  }
+}

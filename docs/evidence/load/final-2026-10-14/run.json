@@ -1,0 +1,8 @@
+{
+  "commit": "96799194a2ce4a49d24294108eea983ea80b56ea",
+  "policies": [
+    "per_type",
+    "per_reference"
+  ],
+  "finishedAt": "2026-10-14T14:16:28-03:00"
+}
